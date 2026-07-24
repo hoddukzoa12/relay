@@ -6,6 +6,11 @@ Format: [Keep a Changelog](https://keepachangelog.com/); versioning is SemVer-is
 
 ## [Unreleased]
 
+### Added
+- A2A v0.3 AgentCards and JSON-RPC `message/send`, plus buyer/merchant-signed
+  AP2 Intent, Cart, and Payment mandates layered over the unchanged Solana Pay
+  request, pay, and on-chain verification spine (#9).
+
 ## [v0.1.0-spine] - 2026-07-24
 
 ### Added

@@ -9,6 +9,8 @@ Concrete spec notes + how they map to Relay. Backs issue **#9** (A2A/AP2) and
 > and use **x402** as the on-chain execution surface (AP2's crypto extension).
 > **Solana Pay stays the guaranteed live-tx rail; these are additive.**
 
+**A2A로 협상 · AP2 mandate로 인가 · Solana Pay로 정산.** (USDC 온체인)
+
 ---
 
 ## A2A (Agent2Agent) — JSON-RPC 2.0 binding, v0.3.0

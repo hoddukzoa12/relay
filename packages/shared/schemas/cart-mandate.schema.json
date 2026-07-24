@@ -1,0 +1,66 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://agentic-resell-broker/schemas/cart-mandate.json",
+  "title": "CartMandate",
+  "description": "AP2 cart and Relay payment request guaranteed by the merchant's Solana ed25519 wallet.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["contents", "signature"],
+  "properties": {
+    "contents": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "id",
+        "user_cart_confirmation_required",
+        "cart_items",
+        "total",
+        "shipping",
+        "tax",
+        "refund_period",
+        "cart_expiry",
+        "merchant_name",
+        "payment_request",
+        "intent_mandate_signature"
+      ],
+      "properties": {
+        "id": { "type": "string" },
+        "user_cart_confirmation_required": { "type": "boolean" },
+        "cart_items": {
+          "type": "array",
+          "minItems": 1,
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["sku", "name", "price"],
+            "properties": {
+              "sku": { "type": "string" },
+              "name": { "type": "string" },
+              "price": { "$ref": "#/$defs/money" }
+            }
+          }
+        },
+        "total": { "$ref": "#/$defs/money" },
+        "shipping": { "$ref": "#/$defs/money" },
+        "tax": { "$ref": "#/$defs/money" },
+        "refund_period": { "type": "integer", "minimum": 0 },
+        "cart_expiry": { "type": "string", "format": "date-time" },
+        "merchant_name": { "type": "string" },
+        "payment_request": { "$ref": "payment-request.schema.json" },
+        "intent_mandate_signature": { "type": "string", "minLength": 1 }
+      }
+    },
+    "signature": { "type": "string", "minLength": 1 }
+  },
+  "$defs": {
+    "money": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["amount", "currency"],
+      "properties": {
+        "amount": { "type": "string", "pattern": "^\\d+(\\.\\d{1,6})?$" },
+        "currency": { "const": "USDC" }
+      }
+    }
+  }
+}

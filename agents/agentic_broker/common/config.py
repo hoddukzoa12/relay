@@ -18,6 +18,7 @@ class Settings:
     payments_url: str = os.getenv("PAYMENTS_SERVICE_URL", "http://localhost:8081")
     commerce_url: str = os.getenv("COMMERCE_SERVICE_URL", "http://localhost:8082")
     shopping_agent_url: str = os.getenv("SHOPPING_AGENT_URL", "http://localhost:8091")
+    buyer_agent_url: str = os.getenv("BUYER_AGENT_URL", "http://localhost:8090")
     buyer_port: int = int(os.getenv("BUYER_PORT", "8090"))
     shopping_port: int = int(os.getenv("SHOPPING_PORT", "8091"))
 

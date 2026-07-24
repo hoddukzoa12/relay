@@ -45,6 +45,84 @@ export const PurchaseIntentSchema = z.object({
 });
 export type PurchaseIntent = z.infer<typeof PurchaseIntentSchema>;
 
+// ---------------------------------------------------------------------------
+// AP2 mandates — carried as A2A DataParts alongside the existing REST contracts.
+// Field names follow google-agentic-commerce/AP2's v0.1 mandate types. Relay's
+// price/shipping/binding fields make the autonomous Solana Pay authorization
+// explicit without changing PaymentRequest or SettlementRequest.
+// ---------------------------------------------------------------------------
+export const AP2_MANDATE_DATA_KEYS = {
+  intent: "ap2.mandates.IntentMandate",
+  cart: "ap2.mandates.CartMandate",
+  payment: "ap2.mandates.PaymentMandate",
+} as const;
+
+export const IntentMandateSchema = z.object({
+  user_cart_confirmation_required: z.boolean(),
+  natural_language_description: z.string(),
+  merchants: z.array(z.string()).nullish(),
+  skus: z.array(z.string()).nullish(),
+  requires_refundability: z.boolean().nullish(),
+  price_ceiling: MoneySchema,
+  ship_to: z.string(),
+  intent_expiry: z.string(),
+  signature: z.string().min(1),
+});
+export type IntentMandate = z.infer<typeof IntentMandateSchema>;
+
+export const CartItemSchema = z.object({
+  sku: z.string(),
+  name: z.string(),
+  price: MoneySchema,
+});
+export type CartItem = z.infer<typeof CartItemSchema>;
+
+export const CartContentsSchema = z.object({
+  id: z.string(),
+  user_cart_confirmation_required: z.boolean(),
+  cart_items: z.array(CartItemSchema).min(1),
+  total: MoneySchema,
+  shipping: MoneySchema,
+  tax: MoneySchema,
+  refund_period: z.number().int().nonnegative(),
+  cart_expiry: z.string(),
+  merchant_name: z.string(),
+  payment_request: PaymentRequestSchema,
+  intent_mandate_signature: z.string().min(1),
+});
+export type CartContents = z.infer<typeof CartContentsSchema>;
+
+export const CartMandateSchema = z.object({
+  contents: CartContentsSchema,
+  signature: z.string().min(1),
+});
+export type CartMandate = z.infer<typeof CartMandateSchema>;
+
+export const PayerInfoSchema = z.object({
+  wallet_address: z.string(),
+  ship_to: z.string().optional(),
+});
+export type PayerInfo = z.infer<typeof PayerInfoSchema>;
+
+export const PaymentMandateContentsSchema = z.object({
+  payment_mandate_id: z.string(),
+  payment_details_id: z.string(),
+  payment_method_token: z.string(),
+  amount: MoneySchema,
+  merchant_name: z.string(),
+  payer: PayerInfoSchema,
+  timestamp: z.string(),
+  cart_mandate_signature: z.string().min(1),
+  intent_mandate_signature: z.string().min(1),
+});
+export type PaymentMandateContents = z.infer<typeof PaymentMandateContentsSchema>;
+
+export const PaymentMandateSchema = z.object({
+  payment_mandate_contents: PaymentMandateContentsSchema,
+  signature: z.string().min(1),
+});
+export type PaymentMandate = z.infer<typeof PaymentMandateSchema>;
+
 /** A2A — buyer agent → shopping agent (Step 5/7 handoff): proof of payment. */
 export const SettlementRequestSchema = z.object({
   orderRef: z.string(),

@@ -9,6 +9,7 @@ from fastapi.responses import HTMLResponse
 from pydantic import BaseModel
 
 from ..common import service_clients
+from ..common.agent_cards import buyer_agent_card
 from ..common.config import settings
 from . import flow
 
@@ -27,6 +28,12 @@ class BuyRequest(BaseModel):
 @app.get("/health")
 def health() -> dict[str, object]:
     return {"ok": True, "agent": "buyer"}
+
+
+@app.get("/.well-known/agent-card.json")
+@app.get("/a2a/agent-card")
+def agent_card() -> dict[str, Any]:
+    return buyer_agent_card()
 
 
 @app.get("/", response_class=HTMLResponse)

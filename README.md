@@ -12,6 +12,8 @@ buyer's wallet **signs it autonomously — no human click** — and settles in
 no card, and no human in the loop, settle instantly and verifiably. That's the
 one sentence the whole design defends.
 
+**A2A로 협상 · AP2 mandate로 인가 · Solana Pay로 정산.** (USDC 온체인)
+
 ---
 
 ## Architecture
@@ -123,13 +125,18 @@ You get back a `txSignature` and an **explorer link** — the on-chain proof.
 
 This maps to PRD §5, steps 5–8 (the judging core):
 
-1. **Buyer → Shopping** `POST /a2a/quote` — "buy X, budget Y, ship to Z".
+1. **Buyer → Shopping** A2A JSON-RPC `POST /a2a` `message/send` — sends a
+   buyer-wallet-signed `IntentMandate` as an A2A DataPart. The original
+   `POST /a2a/quote` route remains available for REST compatibility.
 2. **Shopping** sources a product + price (Gemini), then calls
    **payments** `POST /payment-requests` → mints a fresh `reference` pubkey and
-   returns a [PaymentRequest](packages/shared/schemas/payment-request.schema.json).
-3. **Buyer** calls **payments** `POST /pay` — the wallet **signs and broadcasts**
-   a USDC SPL transfer, tagging it with the `reference` key. **No human approval.**
-4. **Buyer → Shopping** `POST /a2a/settle` with the `txSignature`.
+   returns a merchant-wallet-signed `CartMandate` containing the unchanged
+   [PaymentRequest](packages/shared/schemas/payment-request.schema.json).
+3. **Buyer** verifies the CartMandate, signs a bound `PaymentMandate`, then calls
+   **payments** `POST /pay` — the wallet **signs and broadcasts** a USDC SPL
+   transfer tagged with the `reference` key. **No human approval.**
+4. **Buyer → Shopping** A2A `message/send` carries the `PaymentMandate` and
+   `txSignature`; the legacy `POST /a2a/settle` route is still available.
 5. **Shopping** calls **payments** `POST /verify` → `@solana/pay` `findReference`
    locates the tx and `validateTransfer` confirms **amount + recipient + reference**
    on-chain, trustlessly.
