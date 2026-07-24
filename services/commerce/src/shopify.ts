@@ -63,12 +63,15 @@ const ORDER_MARK_AS_PAID = /* GraphQL */ `
 
 interface OrderCreateData {
   orderCreate: {
-    order: { id: string; name: string } | null;
-    userErrors: { field: string[]; message: string }[];
+    order: { id: string; name: string; displayFinancialStatus: string } | null;
+    userErrors: { field: string[] | null; message: string }[];
   };
 }
 interface OrderMarkAsPaidData {
-  orderMarkAsPaid: { userErrors: { field: string[]; message: string }[] };
+  orderMarkAsPaid: {
+    order: { id: string; displayFinancialStatus: string } | null;
+    userErrors: { field: string[] | null; message: string }[];
+  };
 }
 
 let mockCounter = 1000;
@@ -83,6 +86,7 @@ export async function createPaidOrder(input: OrderInput): Promise<OrderResult> {
 
   const created = await shopifyGraphQL<OrderCreateData>(ORDER_CREATE, {
     order: {
+      currency: config.shopify.currency,
       lineItems: [
         {
           title: input.title,
@@ -116,6 +120,16 @@ export async function createPaidOrder(input: OrderInput): Promise<OrderResult> {
   });
   if (paid.orderMarkAsPaid.userErrors.length) {
     throw new Error(`orderMarkAsPaid failed: ${JSON.stringify(paid.orderMarkAsPaid.userErrors)}`);
+  }
+  if (
+    !paid.orderMarkAsPaid.order ||
+    paid.orderMarkAsPaid.order.displayFinancialStatus !== "PAID"
+  ) {
+    throw new Error(
+      `orderMarkAsPaid returned unexpected status: ${
+        paid.orderMarkAsPaid.order?.displayFinancialStatus ?? "missing order"
+      }`,
+    );
   }
 
   return { shopifyOrderId: order.id, name: order.name, mocked: false };
