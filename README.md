@@ -121,6 +121,11 @@ cd agents && ./.venv/bin/python -m agentic_broker.buyer.cli --query "wireless ea
 
 You get back a `txSignature` and an **explorer link** — the on-chain proof.
 
+To embed the same autonomous flow in a Shopify product-page Custom Liquid
+section, follow [`docs/DEMO-shopify-embed.md`](docs/DEMO-shopify-embed.md). The
+storefront widget calls the buyer agent over HTTPS; it never opens Shopify
+checkout.
+
 ## The scored path (Leg 1), step by step
 
 This maps to PRD §5, steps 5–8 (the judging core):

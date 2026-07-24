@@ -1,0 +1,688 @@
+<!--
+  Relay "Buy with Agent" widget.
+  Paste this entire file into a Shopify product-template Custom Liquid section.
+  Replace YOUR-TUNNEL.trycloudflare.com with the public HTTPS buyer-agent URL.
+-->
+<relay-agent-buy
+  agent-base-url="{{ agent_base_url | default: 'https://YOUR-TUNNEL.trycloudflare.com' | escape }}"
+  product-query="{{ product_query | default: product.title | escape }}"
+  budget-usdc="{{ budget_usdc | default: 25 }}"
+  ship-to="{{ ship_to | default: 'Google Startup Campus, Seoul, KR' | escape }}"
+></relay-agent-buy>
+
+<script>
+(() => {
+  if (customElements.get("relay-agent-buy")) return;
+
+  const template = document.createElement("template");
+  template.innerHTML = `
+    <style>
+      :host {
+        --relay-bg: #fafaf9;
+        --relay-ink: #0a0a0a;
+        --relay-muted: #696963;
+        --relay-rule: #d8d8d2;
+        --relay-soft: #efefeb;
+        --relay-accent: #3157c8;
+        display: block;
+        width: 100%;
+        color: var(--relay-ink);
+        font: 400 15px/1.45 Inter, "Helvetica Neue", Helvetica, Arial, system-ui, sans-serif;
+        font-synthesis: none;
+      }
+
+      * { box-sizing: border-box; }
+      button, input { font: inherit; }
+      button:focus-visible, input:focus-visible, a:focus-visible, summary:focus-visible {
+        outline: 2px solid var(--relay-accent);
+        outline-offset: 3px;
+      }
+
+      .shell {
+        width: 100%;
+        overflow: hidden;
+        border: 1px solid var(--relay-rule);
+        background: var(--relay-bg);
+      }
+
+      .head { padding: clamp(26px, 5vw, 58px); }
+      .eyebrow, .bracket, .state, .meta-key, .proof-kicker {
+        font: 650 10px/1.2 ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+        letter-spacing: .09em;
+        text-transform: uppercase;
+      }
+
+      .eyebrow {
+        margin: 0 0 28px;
+        color: var(--relay-accent);
+      }
+
+      h2 {
+        max-width: 760px;
+        margin: 0;
+        font-size: clamp(34px, 6.4vw, 76px);
+        font-weight: 520;
+        line-height: .98;
+        letter-spacing: -.055em;
+      }
+
+      .intro {
+        max-width: 620px;
+        margin: 24px 0 0;
+        color: var(--relay-muted);
+        font-size: clamp(14px, 2vw, 17px);
+      }
+
+      .brief {
+        display: grid;
+        grid-template-columns: minmax(0, 1.3fr) minmax(150px, .7fr);
+        border-top: 1px solid var(--relay-rule);
+        border-bottom: 1px solid var(--relay-rule);
+      }
+
+      .brief-cell {
+        min-width: 0;
+        padding: 20px clamp(20px, 4vw, 40px);
+      }
+
+      .brief-cell + .brief-cell { border-left: 1px solid var(--relay-rule); }
+      .meta-key { display: block; margin-bottom: 8px; color: var(--relay-muted); }
+      .query {
+        display: block;
+        overflow: hidden;
+        font-size: clamp(18px, 2.8vw, 27px);
+        font-weight: 520;
+        letter-spacing: -.025em;
+        text-overflow: ellipsis;
+        white-space: nowrap;
+      }
+
+      .money-row { display: flex; align-items: baseline; gap: 8px; }
+      .money-row input {
+        width: min(100%, 120px);
+        padding: 0;
+        border: 0;
+        border-bottom: 1px solid var(--relay-ink);
+        border-radius: 0;
+        background: transparent;
+        color: var(--relay-ink);
+        font: 520 23px/1.25 ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+      }
+
+      .money-row span {
+        color: var(--relay-muted);
+        font: 520 11px/1.2 ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+      }
+
+      .action { padding: clamp(22px, 4vw, 40px); }
+      .address-label { display: block; margin-bottom: 10px; color: var(--relay-muted); font-size: 12px; }
+      .address-input {
+        width: 100%;
+        padding: 12px 0;
+        border: 0;
+        border-bottom: 1px solid var(--relay-rule);
+        border-radius: 0;
+        background: transparent;
+        color: var(--relay-ink);
+      }
+
+      .address-input:focus { border-color: var(--relay-accent); }
+      .wallet-line {
+        display: flex;
+        align-items: flex-start;
+        justify-content: space-between;
+        gap: 18px;
+        margin: 22px 0 16px;
+        color: var(--relay-muted);
+      }
+
+      .bracket { flex: 0 0 auto; color: var(--relay-accent); }
+      .wallet-summary {
+        min-width: 0;
+        overflow: hidden;
+        font: 500 11px/1.35 ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+        text-align: right;
+        text-overflow: ellipsis;
+        white-space: nowrap;
+      }
+
+      .buy-button {
+        display: flex;
+        width: 100%;
+        align-items: center;
+        justify-content: space-between;
+        gap: 24px;
+        padding: 17px 18px;
+        border: 1px solid var(--relay-ink);
+        border-radius: 0;
+        background: var(--relay-ink);
+        color: var(--relay-bg);
+        cursor: pointer;
+        font-weight: 560;
+        letter-spacing: -.01em;
+        transition: background 120ms ease, color 120ms ease;
+      }
+
+      .buy-button:hover:not(:disabled) { background: var(--relay-accent); }
+      .buy-button:disabled { cursor: wait; opacity: .62; }
+      .buy-button span:last-child { font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; }
+      .guardrail { margin: 12px 0 0; color: var(--relay-muted); font-size: 11px; }
+
+      .flow { border-top: 1px solid var(--relay-rule); }
+      .flow[hidden] { display: none; }
+      .flow-head {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        gap: 20px;
+        padding: 18px clamp(20px, 4vw, 40px);
+        border-bottom: 1px solid var(--relay-rule);
+      }
+
+      .flow-head h3 { margin: 0; font-size: 13px; font-weight: 600; letter-spacing: -.01em; }
+      .run-state { color: var(--relay-muted); }
+      .run-state.active, .run-state.paid { color: var(--relay-accent); }
+      .steps { padding: 0 clamp(20px, 4vw, 40px); }
+      .step {
+        display: grid;
+        grid-template-columns: 42px minmax(0, 1fr);
+        gap: 18px;
+        padding: 24px 0;
+        border-bottom: 1px solid var(--relay-rule);
+      }
+
+      .step-no {
+        color: var(--relay-muted);
+        font: 500 11px/1.2 ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+      }
+
+      .step-top {
+        display: flex;
+        align-items: baseline;
+        justify-content: space-between;
+        gap: 18px;
+      }
+
+      .step h4 { margin: 0; font-size: 16px; font-weight: 540; letter-spacing: -.02em; }
+      .state { flex: 0 0 auto; color: var(--relay-muted); }
+      .step.active .state, .step.done .state { color: var(--relay-accent); }
+      .step.failed .state, .step.warning .state { color: var(--relay-ink); }
+      .step-message { margin: 7px 0 0; color: var(--relay-muted); font-size: 12px; }
+      .fields {
+        display: grid;
+        grid-template-columns: repeat(2, minmax(0, 1fr));
+        gap: 10px 22px;
+        margin: 16px 0 0;
+      }
+
+      .field { min-width: 0; margin: 0; }
+      .field dt { margin: 0 0 3px; color: var(--relay-muted); font-size: 9px; text-transform: uppercase; }
+      .field dd {
+        margin: 0;
+        overflow: hidden;
+        font: 500 11px/1.35 ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+        text-overflow: ellipsis;
+        white-space: nowrap;
+      }
+
+      .proof { margin: clamp(20px, 4vw, 40px); border: 1px solid var(--relay-accent); }
+      .proof[hidden] { display: none; }
+      .proof-main {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        gap: 22px;
+        padding: 20px;
+      }
+
+      .proof-kicker { margin-bottom: 6px; color: var(--relay-accent); }
+      .proof-title { margin: 0; font-size: 18px; font-weight: 540; letter-spacing: -.025em; }
+      .explorer-link {
+        flex: 0 0 auto;
+        padding-bottom: 2px;
+        border-bottom: 1px solid currentColor;
+        color: var(--relay-accent);
+        font-size: 12px;
+        font-weight: 600;
+        text-decoration: none;
+      }
+
+      .signature {
+        display: block;
+        overflow: hidden;
+        padding: 12px 20px;
+        border-top: 1px solid var(--relay-rule);
+        color: var(--relay-muted);
+        font: 500 10px/1.4 ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+        text-overflow: ellipsis;
+        white-space: nowrap;
+      }
+
+      .outcome { padding: 0 clamp(20px, 4vw, 40px) 28px; color: var(--relay-muted); font-size: 12px; }
+      .outcome:empty { display: none; }
+      details { margin: 0 clamp(20px, 4vw, 40px) 30px; color: var(--relay-muted); font-size: 10px; }
+      summary { cursor: pointer; }
+      pre {
+        max-height: 240px;
+        overflow: auto;
+        padding: 14px;
+        border: 1px solid var(--relay-rule);
+        background: var(--relay-soft);
+        color: var(--relay-ink);
+        font: 10px/1.45 ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+        white-space: pre-wrap;
+        word-break: break-word;
+      }
+
+      @media (max-width: 620px) {
+        .brief { grid-template-columns: 1fr; }
+        .brief-cell + .brief-cell { border-top: 1px solid var(--relay-rule); border-left: 0; }
+        .wallet-line, .proof-main { align-items: flex-start; flex-direction: column; }
+        .wallet-summary { text-align: left; }
+        .step { grid-template-columns: 28px minmax(0, 1fr); gap: 10px; }
+        .step-top { align-items: flex-start; flex-direction: column; gap: 6px; }
+        .fields { grid-template-columns: 1fr; }
+      }
+
+      @media (prefers-reduced-motion: reduce) {
+        *, *::before, *::after { scroll-behavior: auto !important; transition: none !important; }
+      }
+    </style>
+
+    <section class="shell" aria-labelledby="relay-title">
+      <header class="head">
+        <p class="eyebrow">[ Relay / Agent Commerce ]</p>
+        <h2 id="relay-title">Buy with Agent.</h2>
+        <p class="intro">
+          Delegate the purchase. The buyer agent requests an A2A quote, signs
+          autonomously, and settles in USDC on Solana—without Shopify checkout.
+        </p>
+      </header>
+
+      <div class="brief">
+        <div class="brief-cell">
+          <span class="meta-key">Product brief</span>
+          <span class="query" id="query"></span>
+        </div>
+        <label class="brief-cell">
+          <span class="meta-key">Maximum spend</span>
+          <span class="money-row">
+            <input id="budget" inputmode="decimal" aria-label="Maximum spend in USDC" />
+            <span>USDC</span>
+          </span>
+        </label>
+      </div>
+
+      <div class="action">
+        <label class="address-label" for="ship-to">Ship to</label>
+        <input class="address-input" id="ship-to" autocomplete="street-address" />
+        <div class="wallet-line">
+          <span class="bracket" id="wallet-state">[ CONNECTING ]</span>
+          <span class="wallet-summary" id="wallet-summary">Buyer wallet · checking balance</span>
+        </div>
+        <button class="buy-button" id="buy" type="button">
+          <span>Delegate autonomous purchase</span><span>→</span>
+        </button>
+        <p class="guardrail">Budget-bounded · zero payment approval clicks · devnet USDC</p>
+      </div>
+
+      <section class="flow" id="flow" aria-labelledby="flow-title" hidden>
+        <div class="flow-head">
+          <h3 id="flow-title">Autonomous settlement trace</h3>
+          <span class="bracket run-state" id="run-state" role="status">[ READY ]</span>
+        </div>
+        <div class="steps" aria-live="polite">
+          <article class="step idle" data-step="1">
+            <span class="step-no">01</span>
+            <div>
+              <div class="step-top"><h4>A2A quote + payment request</h4><span class="state">[ QUEUED ]</span></div>
+              <p class="step-message">Shopping agent issues an agent-native Solana Pay request.</p>
+              <div class="fields"></div>
+            </div>
+          </article>
+          <article class="step idle" data-step="2">
+            <span class="step-no">02</span>
+            <div>
+              <div class="step-top"><h4>Autonomous wallet signature</h4><span class="state">[ QUEUED ]</span></div>
+              <p class="step-message">Buyer wallet signs without a human approval prompt.</p>
+              <div class="fields"></div>
+            </div>
+          </article>
+          <article class="step idle" data-step="3">
+            <span class="step-no">03</span>
+            <div>
+              <div class="step-top"><h4>USDC on-chain transfer</h4><span class="state">[ QUEUED ]</span></div>
+              <p class="step-message">Solana settles the transfer with the order reference.</p>
+              <div class="fields"></div>
+            </div>
+          </article>
+          <article class="step idle" data-step="4">
+            <span class="step-no">04</span>
+            <div>
+              <div class="step-top"><h4>A2A verification + order ledger</h4><span class="state">[ QUEUED ]</span></div>
+              <p class="step-message">Shopping agent verifies by reference, then records the paid order.</p>
+              <div class="fields"></div>
+            </div>
+          </article>
+        </div>
+
+        <div class="proof" id="proof" hidden>
+          <div class="proof-main">
+            <div>
+              <div class="proof-kicker">[ ON-CHAIN PROOF ]</div>
+              <p class="proof-title">USDC settlement on Solana</p>
+            </div>
+            <a class="explorer-link" id="explorer" target="_blank" rel="noopener noreferrer">View explorer ↗</a>
+          </div>
+          <span class="signature" id="signature"></span>
+        </div>
+        <p class="outcome" id="outcome"></p>
+        <details>
+          <summary>Raw agent response</summary>
+          <pre id="raw"></pre>
+        </details>
+      </section>
+    </section>
+  `;
+
+  class RelayAgentBuy extends HTMLElement {
+    connectedCallback() {
+      if (this.shadowRoot) return;
+      this.attachShadow({ mode: "open" }).append(template.content.cloneNode(true));
+      this.$ = (selector) => this.shadowRoot.querySelector(selector);
+      this.cluster = "devnet";
+      this.walletAddress = "";
+      this.baseUrl = this.cleanBaseUrl(this.getAttribute("agent-base-url") || "");
+
+      const configuredQuery = this.getAttribute("product-query") || "";
+      const configuredBudget = this.getAttribute("budget-usdc") || "";
+      const configuredShipTo = this.getAttribute("ship-to") || "";
+      this.$("#query").textContent = configuredQuery.includes("{{")
+        ? "wireless earbuds"
+        : (configuredQuery.trim() || "wireless earbuds");
+      this.$("#budget").value = configuredBudget.includes("{{")
+        ? "25"
+        : (configuredBudget.trim() || "25");
+      this.$("#ship-to").value = configuredShipTo.trim() || "Google Startup Campus, Seoul, KR";
+      this.$("#buy").addEventListener("click", () => this.buy());
+      this.loadWallet();
+    }
+
+    cleanBaseUrl(value) {
+      return value.trim().replace(/\/+$/, "");
+    }
+
+    isConfigured() {
+      return Boolean(this.baseUrl) && !/YOUR-|example\.com/i.test(this.baseUrl);
+    }
+
+    async fetchJson(path, options = {}) {
+      if (!this.isConfigured()) {
+        throw new Error("Set agent-base-url to the public HTTPS buyer-agent URL.");
+      }
+      let parsedBase;
+      try {
+        parsedBase = new URL(this.baseUrl);
+      } catch {
+        throw new Error("agent-base-url is not a valid URL.");
+      }
+      if (window.location.protocol === "https:" && parsedBase.protocol !== "https:") {
+        throw new Error("Shopify requires an HTTPS buyer-agent URL; HTTP is blocked as mixed content.");
+      }
+
+      const response = await fetch(this.baseUrl + path, { mode: "cors", ...options });
+      const text = await response.text();
+      let payload = {};
+      try {
+        payload = text ? JSON.parse(text) : {};
+      } catch {
+        throw new Error(text || `Invalid response from ${path}`);
+      }
+      if (!response.ok) {
+        throw new Error(this.errorMessage(payload.detail || payload.reason || `HTTP ${response.status}`));
+      }
+      if (payload.error) throw new Error(this.errorMessage(payload.error));
+      return payload;
+    }
+
+    errorMessage(error) {
+      if (typeof error === "string") return error;
+      if (Array.isArray(error)) {
+        return error.map((item) => item.msg || JSON.stringify(item)).join(", ");
+      }
+      return error?.message || "The agent request failed.";
+    }
+
+    short(value, head = 9, tail = 7) {
+      const text = String(value ?? "—");
+      return text.length > head + tail + 3
+        ? `${text.slice(0, head)}…${text.slice(-tail)}`
+        : text;
+    }
+
+    async loadWallet() {
+      if (!this.isConfigured()) {
+        this.$("#wallet-state").textContent = "[ CONFIGURE URL ]";
+        this.$("#wallet-summary").textContent = "Replace YOUR-TUNNEL with the HTTPS buyer-agent URL";
+        return;
+      }
+      try {
+        const balances = await this.fetchJson("/wallet-balances");
+        this.cluster = balances.cluster || "devnet";
+        this.walletAddress = balances.buyer?.address || "";
+        this.$("#wallet-state").textContent = "[ WALLET READY ]";
+        this.$("#wallet-summary").textContent =
+          `${this.short(this.walletAddress)} · ${balances.buyer?.usdc ?? "—"} USDC · ${balances.buyer?.sol ?? "—"} SOL`;
+        this.$("#wallet-summary").title = this.walletAddress;
+      } catch (error) {
+        this.$("#wallet-state").textContent = "[ WALLET UNAVAILABLE ]";
+        this.$("#wallet-summary").textContent = this.errorMessage(error);
+      }
+    }
+
+    setRunState(label, kind = "") {
+      const state = this.$("#run-state");
+      state.textContent = `[ ${label} ]`;
+      state.className = `bracket run-state ${kind}`.trim();
+    }
+
+    setStep(number, kind, state, message, rows = []) {
+      const step = this.$(`[data-step="${number}"]`);
+      step.className = `step ${kind}`;
+      step.querySelector(".state").textContent = `[ ${state} ]`;
+      step.querySelector(".step-message").textContent = message;
+      const fields = step.querySelector(".fields");
+      fields.replaceChildren();
+      rows.forEach(([key, value, title]) => {
+        const field = document.createElement("dl");
+        const term = document.createElement("dt");
+        const detail = document.createElement("dd");
+        field.className = "field";
+        term.textContent = key;
+        detail.textContent = value ?? "—";
+        detail.title = title || String(value ?? "—");
+        field.append(term, detail);
+        fields.append(field);
+      });
+    }
+
+    resetFlow() {
+      const initial = [
+        "Shopping agent issues an agent-native Solana Pay request.",
+        "Buyer wallet signs without a human approval prompt.",
+        "Solana settles the transfer with the order reference.",
+        "Shopping agent verifies by reference, then records the paid order.",
+      ];
+      initial.forEach((message, index) => this.setStep(index + 1, "idle", "QUEUED", message));
+      this.$("#proof").hidden = true;
+      this.$("#outcome").textContent = "";
+      this.$("#raw").textContent = "";
+      this.setRunState("IN PROGRESS", "active");
+    }
+
+    safeExplorerUrl(value, signature) {
+      if (value) {
+        try {
+          const url = new URL(value);
+          if (url.protocol === "https:") return url.href;
+        } catch {}
+      }
+      return signature
+        ? `https://explorer.solana.com/tx/${encodeURIComponent(signature)}?cluster=${encodeURIComponent(this.cluster)}`
+        : "";
+    }
+
+    showProof(signature, explorer) {
+      const href = this.safeExplorerUrl(explorer, signature);
+      if (!signature || !href) return;
+      this.$("#proof").hidden = false;
+      this.$("#signature").textContent = signature;
+      this.$("#signature").title = signature;
+      this.$("#explorer").href = href;
+    }
+
+    isOverBudget(result, quote, budget) {
+      const price = Number.parseFloat(quote?.price?.amount);
+      const reason = String(result?.reason || "");
+      return /over.?budget|exceeds budget|budget.*exceed/i.test(reason)
+        || (Number.isFinite(price) && price > budget);
+    }
+
+    money(price) {
+      return price?.amount == null ? "—" : `${price.amount} ${price.currency || "USDC"}`;
+    }
+
+    async renderResult(result, budget) {
+      const quote = result?.quote || {};
+      const payment = result?.payment || {};
+      const confirmation = result?.confirmation || {};
+      const reason = String(result?.reason || "");
+      const hasQuote = Boolean(quote.title || quote.orderRef || quote.reference);
+      const overBudget = this.isOverBudget(result, quote, budget);
+
+      if (!hasQuote) {
+        throw new Error(reason || "The shopping agent returned no quote.");
+      }
+
+      this.setStep(1, overBudget ? "warning" : "done", overBudget ? "GUARDED" : "A2A RECEIVED",
+        overBudget ? "The buyer guardrail rejected a quote above the delegated budget."
+          : "Quote and agent-native payment request received over A2A.", [
+          ["product", quote.title || "—"],
+          ["amount", this.money(quote.price)],
+          ["payTo", this.short(quote.payTo), quote.payTo],
+          ["reference", this.short(quote.reference), quote.reference],
+        ]);
+
+      if (overBudget) {
+        this.setStep(2, "skipped", "NOT SIGNED", "Budget guardrail stopped the autonomous wallet.");
+        this.setStep(3, "skipped", "NOT SENT", "No USDC transfer was broadcast.");
+        this.setStep(4, "skipped", "NOT RECORDED", "No settlement was available to verify.");
+        this.setRunState("BUDGET GUARD");
+        this.$("#outcome").textContent = reason || "Quote exceeded the delegated maximum spend.";
+        this.$("#raw").textContent = JSON.stringify(result, null, 2);
+        return;
+      }
+
+      const signature = payment.txSignature || confirmation.txSignature || "";
+      const status = String(confirmation.status || "").toLowerCase();
+      const isPaid = status === "paid";
+      const isPending = status === "pending";
+
+      this.setStep(2, signature ? "done" : "failed", signature ? "SIGNED" : "NO SIGNATURE",
+        signature ? "Buyer wallet signed autonomously; human approval clicks: 0."
+          : (reason || "No transaction signature was returned."), [
+          ["buyer", this.short(this.walletAddress), this.walletAddress],
+          ["approval clicks", "0 · autonomous"],
+          ["signature", this.short(signature), signature],
+        ]);
+
+      this.setStep(3, signature ? (isPending ? "active" : "done") : "failed",
+        signature ? (isPending ? "CONFIRMING" : "ON-CHAIN") : "NOT SENT",
+        signature ? "USDC transfer broadcast with the unique order reference."
+          : "The transfer could not be shown without a transaction signature.", [
+          ["asset", this.money(quote.price)],
+          ["network", String(quote.network || this.cluster).toUpperCase()],
+          ["reference", this.short(quote.reference), quote.reference],
+        ]);
+
+      if (isPaid) {
+        this.setStep(4, "done", "PAID", "Reference verified on-chain; Shopify records the order only as a ledger.", [
+          ["status", "PAID · VERIFIED"],
+          ["orderRef", this.short(confirmation.orderRef || quote.orderRef), confirmation.orderRef || quote.orderRef],
+          ["shopifyOrderId", this.short(confirmation.shopifyOrderId), confirmation.shopifyOrderId],
+        ]);
+        this.setRunState("PAID", "paid");
+        this.$("#outcome").textContent =
+          "Autonomous purchase complete. The buyer signed and settled without Shopify checkout.";
+      } else if (isPending) {
+        this.setStep(4, "active", "VERIFYING", "Transfer sent; reference verification is awaiting network confirmation.", [
+          ["status", "PENDING"],
+          ["orderRef", this.short(confirmation.orderRef || quote.orderRef), confirmation.orderRef || quote.orderRef],
+        ]);
+        this.setRunState("VERIFYING", "active");
+        this.$("#outcome").textContent = "The transaction is live and awaiting devnet confirmation.";
+      } else {
+        const finalStatus = status || (result?.ok === false ? "failed" : "unknown");
+        this.setStep(4, "failed", finalStatus.toUpperCase(),
+          reason || `Settlement finished with status: ${finalStatus}.`, [
+          ["status", finalStatus.toUpperCase()],
+          ["orderRef", this.short(confirmation.orderRef || quote.orderRef), confirmation.orderRef || quote.orderRef],
+        ]);
+        this.setRunState(finalStatus.toUpperCase());
+        this.$("#outcome").textContent = reason || "The settlement was not marked paid.";
+      }
+
+      this.showProof(signature, confirmation.explorer || payment.explorer);
+      this.$("#raw").textContent = JSON.stringify(result, null, 2);
+    }
+
+    renderFailure(error) {
+      const message = this.errorMessage(error);
+      this.setStep(1, "failed", "FAILED", message);
+      this.setStep(2, "skipped", "NOT SIGNED", "The wallet did not sign.");
+      this.setStep(3, "skipped", "NOT SENT", "No transfer was broadcast.");
+      this.setStep(4, "skipped", "NOT RECORDED", "No paid order was recorded.");
+      this.setRunState("FAILED");
+      this.$("#outcome").textContent = message;
+    }
+
+    async buy() {
+      const query = this.$("#query").textContent.trim();
+      const budget = Number(this.$("#budget").value);
+      const shipTo = this.$("#ship-to").value.trim();
+      this.$("#flow").hidden = false;
+      this.resetFlow();
+
+      if (!query || !Number.isFinite(budget) || budget <= 0 || !shipTo) {
+        this.renderFailure("Enter a positive USDC budget and shipping destination.");
+        return;
+      }
+
+      const button = this.$("#buy");
+      button.disabled = true;
+      button.firstElementChild.textContent = "Agent settlement in progress";
+      this.setStep(1, "active", "A2A REQUEST", "Requesting a quote within the delegated budget.", [
+        ["query", query],
+        ["budget", `${budget} USDC`],
+        ["shipTo", this.short(shipTo, 14, 10), shipTo],
+      ]);
+
+      try {
+        const result = await this.fetchJson("/buy", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ query, budget, shipTo }),
+        });
+        await this.renderResult(result, budget);
+      } catch (error) {
+        this.renderFailure(error);
+      } finally {
+        button.disabled = false;
+        button.firstElementChild.textContent = "Delegate autonomous purchase";
+      }
+    }
+  }
+
+  customElements.define("relay-agent-buy", RelayAgentBuy);
+})();
+</script>

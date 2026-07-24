@@ -12,6 +12,8 @@ Format: [Keep a Changelog](https://keepachangelog.com/); versioning is SemVer-is
   request, pay, and on-chain verification spine (#9).
 - Live Shopify order-ledger integration with custom-priced line items, on-chain
   payment attributes, and explicit paid-status verification (#8).
+- A self-contained Shopify product-page "Buy with Agent" widget, configurable
+  buyer-agent CORS allowlist, and HTTPS tunnel demo guide (#14).
 
 ## [v0.1.0-spine] - 2026-07-24
 
