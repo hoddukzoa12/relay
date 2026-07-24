@@ -1,0 +1,38 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://agentic-resell-broker/schemas/intent-mandate.json",
+  "title": "IntentMandate",
+  "description": "AP2 purchase intent authorized by the buyer's Solana ed25519 wallet.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "user_cart_confirmation_required",
+    "natural_language_description",
+    "price_ceiling",
+    "ship_to",
+    "intent_expiry",
+    "signature"
+  ],
+  "properties": {
+    "user_cart_confirmation_required": { "type": "boolean" },
+    "natural_language_description": { "type": "string" },
+    "merchants": { "type": ["array", "null"], "items": { "type": "string" } },
+    "skus": { "type": ["array", "null"], "items": { "type": "string" } },
+    "requires_refundability": { "type": ["boolean", "null"], "default": false },
+    "price_ceiling": { "$ref": "#/$defs/money" },
+    "ship_to": { "type": "string" },
+    "intent_expiry": { "type": "string", "format": "date-time" },
+    "signature": { "type": "string", "minLength": 1 }
+  },
+  "$defs": {
+    "money": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["amount", "currency"],
+      "properties": {
+        "amount": { "type": "string", "pattern": "^\\d+(\\.\\d{1,6})?$" },
+        "currency": { "const": "USDC" }
+      }
+    }
+  }
+}

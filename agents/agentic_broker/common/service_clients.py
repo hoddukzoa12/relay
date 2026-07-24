@@ -7,6 +7,7 @@ threadpool — so we avoid async plumbing entirely.
 from __future__ import annotations
 
 from typing import Any, Optional
+from uuid import uuid4
 
 import httpx
 
@@ -57,6 +58,26 @@ def payments_wallets() -> dict[str, Any]:
     return _get(f"{settings.payments_url}/wallets")
 
 
+def payments_sign_mandate(
+    mandate: dict[str, Any], signer: str
+) -> dict[str, Any]:
+    """Sign canonical mandate JSON with a configured Solana wallet."""
+    return _post(
+        f"{settings.payments_url}/sign-mandate",
+        {"mandate": mandate, "signer": signer},
+    )
+
+
+def payments_verify_mandate(
+    mandate: dict[str, Any], signer: str
+) -> dict[str, Any]:
+    """Verify a mandate against the configured buyer or merchant wallet."""
+    return _post(
+        f"{settings.payments_url}/verify-mandate",
+        {"mandate": mandate, "signer": signer},
+    )
+
+
 # --- commerce service --------------------------------------------------------
 def commerce_create_order(payload: dict[str, Any]) -> dict[str, Any]:
     return _post(f"{settings.commerce_url}/orders", payload)
@@ -69,3 +90,35 @@ def a2a_quote(intent: dict[str, Any]) -> dict[str, Any]:
 
 def a2a_settle(req: dict[str, Any]) -> dict[str, Any]:
     return _post(f"{settings.shopping_agent_url}/a2a/settle", req)
+
+
+def a2a_message_send(
+    data: dict[str, Any], *, context_id: Optional[str] = None
+) -> dict[str, Any]:
+    """Send one A2A v0.3 JSON-RPC message containing an AP2 DataPart."""
+    request_id = str(uuid4())
+    message: dict[str, Any] = {
+        "kind": "message",
+        "messageId": str(uuid4()),
+        "role": "user",
+        "parts": [{"kind": "data", "data": data}],
+    }
+    if context_id:
+        message["contextId"] = context_id
+
+    response = _post(
+        f"{settings.shopping_agent_url}/a2a",
+        {
+            "jsonrpc": "2.0",
+            "id": request_id,
+            "method": "message/send",
+            "params": {"message": message},
+        },
+    )
+    if "error" in response:
+        error = response["error"]
+        raise RuntimeError(error.get("message", "A2A request failed"))
+    result = response.get("result")
+    if not isinstance(result, dict):
+        raise RuntimeError("A2A response did not contain a Task result")
+    return result

@@ -26,12 +26,22 @@ def buy(query: str, budget: float, ship_to: str) -> dict[str, Any]:
 
     # Step 4–6: the wallet signs autonomously and broadcasts the USDC transfer.
     payment = tools.authorize_payment(
-        quote["payTo"], quote["price"]["amount"], quote["reference"]
+        quote["payTo"],
+        quote["price"]["amount"],
+        quote["reference"],
+        quote.get("ap2Mandates"),
     )
 
     # Step 7–11: hand proof to the broker; it verifies on-chain + records the order.
+    settlement_mandates = {
+        **quote.get("ap2Mandates", {}),
+        **payment.get("ap2Mandates", {}),
+    }
     confirmation = tools.confirm_settlement(
-        quote["orderRef"], quote["reference"], payment["txSignature"]
+        quote["orderRef"],
+        quote["reference"],
+        payment["txSignature"],
+        settlement_mandates,
     )
 
     return {

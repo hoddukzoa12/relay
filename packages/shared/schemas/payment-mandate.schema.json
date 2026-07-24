@@ -1,0 +1,57 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://agentic-resell-broker/schemas/payment-mandate.json",
+  "title": "PaymentMandate",
+  "description": "AP2 payment authorization signed by the buyer and bound to the accepted intent and cart.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["payment_mandate_contents", "signature"],
+  "properties": {
+    "payment_mandate_contents": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "payment_mandate_id",
+        "payment_details_id",
+        "payment_method_token",
+        "amount",
+        "merchant_name",
+        "payer",
+        "timestamp",
+        "cart_mandate_signature",
+        "intent_mandate_signature"
+      ],
+      "properties": {
+        "payment_mandate_id": { "type": "string" },
+        "payment_details_id": { "type": "string" },
+        "payment_method_token": { "type": "string" },
+        "amount": { "$ref": "#/$defs/money" },
+        "merchant_name": { "type": "string" },
+        "payer": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["wallet_address"],
+          "properties": {
+            "wallet_address": { "type": "string" },
+            "ship_to": { "type": "string" }
+          }
+        },
+        "timestamp": { "type": "string", "format": "date-time" },
+        "cart_mandate_signature": { "type": "string", "minLength": 1 },
+        "intent_mandate_signature": { "type": "string", "minLength": 1 }
+      }
+    },
+    "signature": { "type": "string", "minLength": 1 }
+  },
+  "$defs": {
+    "money": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["amount", "currency"],
+      "properties": {
+        "amount": { "type": "string", "pattern": "^\\d+(\\.\\d{1,6})?$" },
+        "currency": { "const": "USDC" }
+      }
+    }
+  }
+}
