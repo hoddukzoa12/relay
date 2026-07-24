@@ -2,7 +2,6 @@ import {
   Keypair,
   PublicKey,
   Transaction,
-  sendAndConfirmTransaction,
 } from "@solana/web3.js";
 import { createTransferCheckedInstruction } from "@solana/spl-token";
 import {
@@ -20,6 +19,7 @@ import {
 } from "@arb/shared";
 import { config } from "./config.js";
 import {
+  assertUsdcDecimals,
   buyer,
   connection,
   ensureAta,
@@ -32,6 +32,10 @@ import {
 import { store, type StoredRequest } from "./store.js";
 
 const CLUSTER = config.cluster;
+const VERIFY_TIMEOUT_MS = 20_000;
+const VERIFY_POLL_MS = 1_000;
+
+const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
 
 // ---------------------------------------------------------------------------
 // Step 3 — the shopping agent issues an agent-native payment request.
@@ -97,6 +101,21 @@ export interface PayInput {
 export async function pay(input: PayInput): Promise<{ txSignature: string; explorer: string }> {
   const recipient = new PublicKey(input.payTo);
   const referencePk = new PublicKey(input.reference);
+  const stored = store.get(input.reference);
+  if (!stored) {
+    throw new Error("Unknown payment reference");
+  }
+  if (Date.now() > stored.expiresAt) {
+    throw new Error("Payment request has expired");
+  }
+  if (
+    stored.recipient !== recipient.toBase58() ||
+    !new BigNumber(stored.amount).eq(input.amount)
+  ) {
+    throw new Error("Payment does not match the issued request");
+  }
+
+  await assertUsdcDecimals();
 
   // Ensure both sides have a USDC token account (buyer funds any creation).
   const buyerAta = await ensureAta(buyer, buyer.publicKey);
@@ -116,10 +135,21 @@ export async function pay(input: PayInput): Promise<{ txSignature: string; explo
 
   const tx = new Transaction().add(ix);
   tx.feePayer = buyer.publicKey;
+  const latestBlockhash = await connection.getLatestBlockhash("confirmed");
+  tx.recentBlockhash = latestBlockhash.blockhash;
+  tx.sign(buyer);
 
-  const signature = await sendAndConfirmTransaction(connection, tx, [buyer], {
-    commitment: "confirmed",
+  const signature = await connection.sendRawTransaction(tx.serialize(), {
+    preflightCommitment: "confirmed",
+    maxRetries: 5,
   });
+  const confirmation = await connection.confirmTransaction(
+    { signature, ...latestBlockhash },
+    "confirmed",
+  );
+  if (confirmation.value.err) {
+    throw new Error(`USDC transfer failed: ${JSON.stringify(confirmation.value.err)}`);
+  }
 
   return { txSignature: signature, explorer: explorerTxUrl(signature, CLUSTER) };
 }
@@ -134,36 +164,60 @@ export async function verify(reference: string): Promise<VerificationResult> {
   }
 
   const referencePk = new PublicKey(reference);
+  const deadline = Date.now() + VERIFY_TIMEOUT_MS;
 
   let signatureInfo;
-  try {
-    signatureInfo = await withFailover((c) =>
-      findReference(c, referencePk, { finality: "confirmed" }),
-    );
-  } catch (err) {
-    if (err instanceof FindReferenceError) {
-      const status = Date.now() > stored.expiresAt ? "expired" : "pending";
-      return { status, txSignature: null, explorer: null, amount: null };
+  while (!signatureInfo) {
+    try {
+      signatureInfo = await withFailover((c) =>
+        findReference(c, referencePk, { finality: "confirmed" }),
+        (err) => !(err instanceof FindReferenceError),
+      );
+    } catch (err) {
+      if (!(err instanceof FindReferenceError)) throw err;
+      if (Date.now() >= deadline) {
+        const status = Date.now() > stored.expiresAt ? "expired" : "pending";
+        return { status, txSignature: null, explorer: null, amount: null };
+      }
+      await sleep(Math.min(VERIFY_POLL_MS, deadline - Date.now()));
     }
-    throw err;
   }
 
-  try {
-    await withFailover((c) =>
-      validateTransfer(
-        c,
-        signatureInfo.signature,
-        {
-          recipient: new PublicKey(stored.recipient),
-          amount: new BigNumber(stored.amount),
-          splToken: usdcMint,
-          reference: referencePk,
-        },
-        { commitment: "confirmed" },
-      ),
-    );
-  } catch (err) {
-    if (err instanceof ValidateTransferError) {
+  while (true) {
+    try {
+      await withFailover((c) =>
+        validateTransfer(
+          c,
+          signatureInfo.signature,
+          {
+            recipient: new PublicKey(stored.recipient),
+            amount: new BigNumber(stored.amount),
+            splToken: usdcMint,
+            reference: referencePk,
+          },
+          { commitment: "confirmed" },
+        ),
+        (err) => !(err instanceof ValidateTransferError),
+      );
+      break;
+    } catch (err) {
+      if (
+        err instanceof ValidateTransferError &&
+        err.message === "not found" &&
+        Date.now() < deadline
+      ) {
+        await sleep(Math.min(VERIFY_POLL_MS, deadline - Date.now()));
+        continue;
+      }
+      if (!(err instanceof ValidateTransferError)) throw err;
+      if (err.message === "not found") {
+        return {
+          status: Date.now() > stored.expiresAt ? "expired" : "pending",
+          txSignature: signatureInfo.signature,
+          explorer: explorerTxUrl(signatureInfo.signature, CLUSTER),
+          amount: null,
+        };
+      }
       console.warn(`[verify] on-chain tx failed validation for ${reference}:`, err.message);
       return {
         status: "invalid",
@@ -172,7 +226,6 @@ export async function verify(reference: string): Promise<VerificationResult> {
         amount: null,
       };
     }
-    throw err;
   }
 
   return {
