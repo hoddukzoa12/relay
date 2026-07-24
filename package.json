@@ -1,0 +1,24 @@
+{
+  "name": "agentic-resell-broker",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Agentic Resell Broker — agent-to-agent commerce settled autonomously in on-chain USDC (Solana devnet).",
+  "type": "module",
+  "engines": {
+    "node": ">=20"
+  },
+  "packageManager": "pnpm@9.12.0",
+  "scripts": {
+    "dev:payments": "pnpm --filter @arb/payments dev",
+    "dev:commerce": "pnpm --filter @arb/commerce dev",
+    "dev:services": "pnpm -r --parallel --filter \"./services/*\" dev",
+    "build": "pnpm -r build",
+    "typecheck": "pnpm -r typecheck",
+    "compose:up": "docker compose -f infra/docker-compose.yml up --build",
+    "compose:down": "docker compose -f infra/docker-compose.yml down"
+  },
+  "devDependencies": {
+    "@types/node": "^22.7.4",
+    "typescript": "^5.6.2"
+  }
+}

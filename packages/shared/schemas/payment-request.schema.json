@@ -1,0 +1,28 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://agentic-resell-broker/schemas/payment-request.json",
+  "title": "PaymentRequest",
+  "description": "Agent-native payment request issued by the shopping agent to the buyer agent (PRD §6, Step 3).",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["productId", "title", "price", "payTo", "reference", "orderRef", "network", "expiresAt"],
+  "properties": {
+    "productId": { "type": "string", "description": "Shopify product/variant id" },
+    "title": { "type": "string" },
+    "price": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["amount", "currency"],
+      "properties": {
+        "amount": { "type": "string", "pattern": "^\\d+(\\.\\d{1,6})?$" },
+        "currency": { "const": "USDC" }
+      }
+    },
+    "payTo": { "type": "string", "description": "Merchant receiving wallet pubkey (base58)" },
+    "reference": { "type": "string", "description": "Unique per-order pubkey; on-chain verification key" },
+    "orderRef": { "type": "string", "description": "Internal order-correlation id" },
+    "network": { "enum": ["solana-devnet", "solana-mainnet"] },
+    "expiresAt": { "type": "string", "format": "date-time" },
+    "solanaPayUrl": { "type": "string" }
+  }
+}

@@ -1,0 +1,126 @@
+<!doctype html>
+<html lang="ko">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Agentic Resell Broker — Demo</title>
+  <style>
+    :root { --bg:#0b0e14; --panel:#141922; --line:#232a36; --fg:#e6edf3; --muted:#8b98a9;
+            --accent:#14f195; --accent2:#9945ff; --warn:#ffb454; }
+    * { box-sizing: border-box; }
+    body { margin:0; background:var(--bg); color:var(--fg);
+           font:15px/1.5 ui-sans-serif,system-ui,-apple-system,"Segoe UI",Roboto,sans-serif; }
+    .wrap { max-width: 760px; margin: 0 auto; padding: 32px 20px 64px; }
+    h1 { font-size: 22px; margin: 0 0 4px; }
+    .sub { color: var(--muted); margin: 0 0 24px; }
+    .badge { display:inline-block; padding:2px 8px; border-radius:999px; font-size:12px;
+             background:linear-gradient(90deg,var(--accent),var(--accent2)); color:#04120b; font-weight:600; }
+    .card { background:var(--panel); border:1px solid var(--line); border-radius:12px; padding:18px; margin:14px 0; }
+    label { display:block; font-size:13px; color:var(--muted); margin:10px 0 4px; }
+    input { width:100%; padding:10px 12px; border-radius:8px; border:1px solid var(--line);
+            background:#0d1119; color:var(--fg); font-size:15px; }
+    .row { display:flex; gap:12px; } .row > div { flex:1; }
+    button { margin-top:16px; width:100%; padding:12px; border:0; border-radius:10px; cursor:pointer;
+             background:linear-gradient(90deg,var(--accent),var(--accent2)); color:#04120b;
+             font-weight:700; font-size:15px; }
+    button:disabled { opacity:.5; cursor:not-allowed; }
+    .wallets { font-size:12px; color:var(--muted); margin-top:10px; word-break:break-all; }
+    .step { border-left:2px solid var(--line); padding:2px 0 2px 14px; margin:6px 0; }
+    .step.done { border-color:var(--accent); }
+    .step.warn { border-color:var(--warn); }
+    .k { color:var(--muted); } .v { word-break:break-all; }
+    a { color:var(--accent); }
+    pre { background:#0d1119; border:1px solid var(--line); border-radius:8px; padding:12px;
+          overflow:auto; font-size:12px; color:#b9c6d6; }
+    .hint { color:var(--muted); font-size:12px; }
+  </style>
+</head>
+<body>
+  <div class="wrap">
+    <span class="badge">Solana devnet · USDC · autonomous</span>
+    <h1>에이전트 리셀 브로커</h1>
+    <p class="sub">일반 에이전트에게 구매를 위임하면 — 사람 승인 0회로 온체인 USDC 자율 정산됩니다.</p>
+
+    <div class="card">
+      <label>무엇을 사올까요? (query)</label>
+      <input id="query" value="wireless earbuds" />
+      <div class="row">
+        <div>
+          <label>예산 (USDC)</label>
+          <input id="budget" value="25" inputmode="decimal" />
+        </div>
+        <div>
+          <label>배송지 (shipTo)</label>
+          <input id="shipTo" value="Google Startup Campus, Seoul, KR" />
+        </div>
+      </div>
+      <button id="go">🤖 에이전트에게 구매 위임</button>
+      <div class="wallets" id="wallets">지갑 정보 로딩…</div>
+    </div>
+
+    <div id="result"></div>
+  </div>
+
+  <script>
+    const $ = (id) => document.getElementById(id);
+
+    async function loadWallets() {
+      try {
+        const w = await (await fetch("/wallets")).json();
+        $("wallets").innerHTML = w.error
+          ? `⚠️ payments 서비스 미연결: ${w.error}`
+          : `merchant ${w.merchant}<br>buyer ${w.buyer}<br>USDC mint ${w.usdcMint} · ${w.cluster}`;
+      } catch (e) { $("wallets").textContent = "지갑 정보를 불러오지 못했습니다."; }
+    }
+    loadWallets();
+
+    function step(cls, title, rows) {
+      const body = rows.map(([k, v]) => `<div><span class="k">${k}:</span> <span class="v">${v}</span></div>`).join("");
+      return `<div class="step ${cls}"><b>${title}</b>${body}</div>`;
+    }
+
+    $("go").onclick = async () => {
+      const btn = $("go"); btn.disabled = true; btn.textContent = "정산 중…";
+      $("result").innerHTML = "";
+      try {
+        const res = await fetch("/buy", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            query: $("query").value,
+            budget: parseFloat($("budget").value),
+            shipTo: $("shipTo").value,
+          }),
+        });
+        const r = await res.json();
+        const q = r.quote || {}, p = r.payment || {}, c = r.confirmation || {};
+        let html = "<div class='card'>";
+        if (q.title) html += step("done", "① 견적 · 결제요청 (A2A)", [
+          ["상품", q.title], ["판매가", (q.price && q.price.amount) + " USDC"],
+          ["payTo", q.payTo], ["reference", q.reference], ["orderRef", q.orderRef],
+        ]);
+        if (p.txSignature) html += step("done", "② 자율 서명 · USDC 전송", [
+          ["txSignature", p.txSignature],
+          ["explorer", `<a href="${p.explorer}" target="_blank">${p.explorer}</a>`],
+        ]);
+        const paid = c.status === "paid";
+        html += step(paid ? "done" : "warn", "③ 온체인 검증 · 주문 확정", [
+          ["status", c.status || r.reason || "—"],
+          ["shopifyOrderId", c.shopifyOrderId || "—"],
+          ["explorer", c.explorer ? `<a href="${c.explorer}" target="_blank">${c.explorer}</a>` : "—"],
+        ]);
+        html += paid
+          ? `<p style="color:var(--accent)"><b>✅ 결제 완료 — 사람 클릭 0회.</b></p>`
+          : `<p style="color:var(--warn)"><b>⚠️ ${c.status || r.reason || "실패"}</b></p>`;
+        html += "</div><details><summary class='hint'>raw JSON</summary><pre>" +
+                JSON.stringify(r, null, 2) + "</pre></details>";
+        $("result").innerHTML = html;
+      } catch (e) {
+        $("result").innerHTML = `<div class="card">오류: ${e}</div>`;
+      } finally {
+        btn.disabled = false; btn.textContent = "🤖 에이전트에게 구매 위임";
+      }
+    };
+  </script>
+</body>
+</html>

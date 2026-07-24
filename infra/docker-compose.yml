@@ -1,0 +1,55 @@
+# Full stack for local dev / rehearsal.
+#   docker compose -f infra/docker-compose.yml up --build
+# Reads secrets from the repo-root .env; mounts ./wallets for the payments svc.
+name: agentic-resell-broker
+
+services:
+  payments:
+    build:
+      context: ..
+      dockerfile: services/payments/Dockerfile
+    env_file: ../.env
+    environment:
+      PAYMENTS_PORT: 8081
+    volumes:
+      - ../wallets:/app/wallets:ro
+    ports:
+      - "8081:8081"
+
+  commerce:
+    build:
+      context: ..
+      dockerfile: services/commerce/Dockerfile
+    env_file: ../.env
+    environment:
+      COMMERCE_PORT: 8082
+    ports:
+      - "8082:8082"
+
+  shopping:
+    build:
+      context: ../agents
+      dockerfile: Dockerfile
+    env_file: ../.env
+    environment:
+      SHOPPING_PORT: 8091
+      PAYMENTS_SERVICE_URL: http://payments:8081
+      COMMERCE_SERVICE_URL: http://commerce:8082
+    command: ["python", "-m", "agentic_broker.shopping.server"]
+    depends_on: [payments, commerce]
+    ports:
+      - "8091:8091"
+
+  buyer:
+    build:
+      context: ../agents
+      dockerfile: Dockerfile
+    env_file: ../.env
+    environment:
+      BUYER_PORT: 8090
+      PAYMENTS_SERVICE_URL: http://payments:8081
+      SHOPPING_AGENT_URL: http://shopping:8091
+    command: ["python", "-m", "agentic_broker.buyer.server"]
+    depends_on: [payments, shopping]
+    ports:
+      - "8090:8090"

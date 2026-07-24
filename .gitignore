@@ -1,0 +1,33 @@
+# --- Node / TypeScript ---
+node_modules/
+dist/
+*.tsbuildinfo
+.pnpm-store/
+
+# --- Python ---
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+.python-version
+*.egg-info/
+.pytest_cache/
+.ruff_cache/
+
+# --- Env & secrets (NEVER commit wallet keys / API tokens) ---
+.env
+.env.*
+!.env.example
+*.wallet.json
+wallets/*.json
+!wallets/.gitkeep
+
+# --- Build / infra ---
+.cloudrun-image
+gcp-key.json
+
+# --- OS / editor ---
+.DS_Store
+.idea/
+.vscode/
+*.log

@@ -1,0 +1,16 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://agentic-resell-broker/schemas/order-confirmation.json",
+  "title": "OrderConfirmation",
+  "description": "Final confirmation returned by the shopping agent to the buyer agent (PRD §6, Step 11).",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["orderRef", "status", "txSignature", "explorer", "shopifyOrderId"],
+  "properties": {
+    "orderRef": { "type": "string" },
+    "status": { "enum": ["pending", "paid", "expired", "invalid"] },
+    "txSignature": { "type": ["string", "null"] },
+    "explorer": { "type": ["string", "null"] },
+    "shopifyOrderId": { "type": ["string", "null"] }
+  }
+}

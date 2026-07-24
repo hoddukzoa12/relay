@@ -1,0 +1,6 @@
+# Put your solana-keygen keypairs here (git-ignored):
+#   merchant.json   ← shopping agent's receiving wallet
+#   buyer.json      ← buyer agent's wallet (holds devnet USDC + SOL for fees)
+#
+# These are id.json files (JSON array of 64 bytes), e.g. from:
+#   solana-keygen new --no-bip39-passphrase -o wallets/buyer.json
