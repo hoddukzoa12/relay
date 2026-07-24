@@ -6,7 +6,13 @@ Format: [Keep a Changelog](https://keepachangelog.com/); versioning is SemVer-is
 
 ## [Unreleased]
 
+## [v0.1.0-spine] - 2026-07-24
+
 ### Added
+- **Payment spine hardened** (#1, #11): issued-request validation on `pay`,
+  on-chain USDC mint-decimal check, robust send/confirm with explicit blockhash,
+  and `verify` polling (~20s) to absorb confirmation lag. First live devnet USDC
+  round-trip — 3.45 USDC buyer→merchant, verified on the explorer.
 - Monorepo scaffold: Python agents (Google ADK + Gemini) `buyer` + `shopping`;
   TypeScript services `payments` (@solana/web3.js + @solana/pay) + `commerce`
   (Shopify, mock-able); `packages/shared` canonical contracts (PRD §6).
