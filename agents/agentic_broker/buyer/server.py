@@ -8,6 +8,7 @@ from typing import Any, Optional
 
 import httpx
 from fastapi import FastAPI
+from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import HTMLResponse
 from pydantic import BaseModel
 
@@ -16,7 +17,30 @@ from ..common.agent_cards import buyer_agent_card
 from ..common.config import settings
 from . import flow
 
+
+def _cors_origins() -> list[str]:
+    """Return the explicitly configured storefront origins for browser clients."""
+    origins = [
+        value.strip().rstrip("/")
+        for value in os.getenv("BUYER_CORS_ORIGINS", "").split(",")
+        if value.strip()
+    ]
+    shopify_domain = os.getenv("SHOPIFY_STORE_DOMAIN", "").strip().rstrip("/")
+    if shopify_domain and shopify_domain != "your-store.myshopify.com":
+        if not shopify_domain.startswith(("http://", "https://")):
+            shopify_domain = f"https://{shopify_domain}"
+        origins.append(shopify_domain)
+    return list(dict.fromkeys(origins))
+
+
 app = FastAPI(title="Buyer Agent", version="0.1.0")
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=_cors_origins(),
+    allow_methods=["GET", "POST", "OPTIONS"],
+    allow_headers=["Content-Type"],
+    max_age=600,
+)
 
 _WEB_INDEX = Path(__file__).resolve().parents[1] / "web" / "index.html"
 
