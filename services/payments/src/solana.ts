@@ -6,6 +6,7 @@ import {
 } from "@solana/web3.js";
 import {
   getAssociatedTokenAddress,
+  getMint,
   getOrCreateAssociatedTokenAccount,
   type Account,
 } from "@solana/spl-token";
@@ -26,11 +27,12 @@ const fallback = config.rpcUrlFallback
 
 export async function withFailover<T>(
   fn: (c: Connection) => Promise<T>,
+  shouldFailover: (err: unknown) => boolean = () => true,
 ): Promise<T> {
   try {
     return await fn(connection);
   } catch (err) {
-    if (!fallback) throw err;
+    if (!fallback || !shouldFailover(err)) throw err;
     console.warn("[solana] primary RPC failed, retrying on fallback:", String(err));
     return await fn(fallback);
   }
@@ -68,12 +70,45 @@ export function usdcAta(owner: PublicKey): Promise<PublicKey> {
  * `payer` funds the (one-time) rent. Returns the token account.
  */
 export function ensureAta(payer: Keypair, owner: PublicKey): Promise<Account> {
-  return getOrCreateAssociatedTokenAccount(connection, payer, usdcMint, owner);
+  return getOrCreateAssociatedTokenAccount(
+    connection,
+    payer,
+    usdcMint,
+    owner,
+    false,
+    COMMITMENT,
+    {
+      commitment: COMMITMENT,
+      preflightCommitment: COMMITMENT,
+      maxRetries: 5,
+    },
+  );
+}
+
+/** Fail before signing if .env disagrees with the mint's on-chain decimals. */
+export async function assertUsdcDecimals(): Promise<void> {
+  const mint = await getMint(connection, usdcMint, COMMITMENT);
+  if (mint.decimals !== usdcDecimals) {
+    throw new Error(
+      `USDC_DECIMALS=${usdcDecimals} does not match mint ${usdcMint.toBase58()} ` +
+        `decimals=${mint.decimals}`,
+    );
+  }
 }
 
 /** Convert a decimal USDC string ("25.00") to a base-unit bigint. */
 export function toBaseUnits(amount: string): bigint {
+  if (!/^\d+(\.\d+)?$/.test(amount)) {
+    throw new Error(`Invalid USDC amount: ${amount}`);
+  }
   const [whole, frac = ""] = amount.split(".");
+  if (frac.length > usdcDecimals) {
+    throw new Error(`USDC amount has more than ${usdcDecimals} decimal places`);
+  }
   const padded = (frac + "0".repeat(usdcDecimals)).slice(0, usdcDecimals);
-  return BigInt(whole + padded);
+  const baseUnits = BigInt(whole + padded);
+  if (baseUnits <= 0n) {
+    throw new Error("USDC amount must be greater than zero");
+  }
+  return baseUnits;
 }
