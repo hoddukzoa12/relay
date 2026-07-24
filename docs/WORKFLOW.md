@@ -27,17 +27,28 @@ This repo is built with **supervised multi-agent orchestration** via [Orca](http
 | **#1** | 🎯 Spine: Leg 1 devnet USDC 왕복 | p0 | — |
 | #8 | Commerce 실연동 (Shopify) | p1 | — (parallel with #1) |
 | #3 | 데모 웹 UI 다듬기 | p1 | soft: #1 |
+| **#9** | A2A 정합 + AP2 mandate (②③ 승부수) | p1 | soft: #1 |
 | #2 | Cloud Run 배포 | p1 | #1 |
 | #4 | Eval 하네스 (③) | stretch | #1 |
-| #6 | x402 옵션 레이어 (④) | stretch | #1 |
+| #6 | x402 애드온 (③④, AP2 crypto ext) | stretch | #1 |
 | #5 | Gemini Enterprise publish (⑤) | stretch | #2 |
 | #7 | 데모 영상 + 자체심사 | p1 | #1,#2,#3,#8 |
 
 **Waves**
 - **Wave 0 (now):** #1 (spine). Optionally #8 and #3 in parallel — their
   contracts are fixed, so they can't diverge from #1.
-- **Wave 1 (after #1 merges):** #2, #4, #6.
-- **Wave 2:** #5, then #7 (final).
+- **Wave 1 (after #1 merges):** #9 (protocol alignment — highest ③/② ROI), #2, #4.
+- **Wave 2:** #6 (x402 addon), #5, then #7 (final).
+
+## Protocol positioning (③ / ②)
+
+Shopify's own Solana Pay is a **human web-checkout** (scan QR, approve in wallet)
+— exactly what we avoid. We keep Shopify as an order ledger only and settle
+autonomously. For the "차세대 결제 프로토콜" criterion we lead with **Google's own
+stack**: A2A (already used) + **AP2 mandate** framing (#9), with **x402** as an
+additive on-chain execution surface (#6, AP2's crypto extension, live on Solana).
+Solana Pay stays the **guaranteed** live-tx rail; x402 never gates the demo.
+One-line pitch: *"A2A로 협상 · AP2 mandate로 인가 · Solana Pay(+x402)로 USDC 온체인 정산."*
 
 ## Branch / worktree convention
 
