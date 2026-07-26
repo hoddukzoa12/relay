@@ -1,0 +1,83 @@
+[
+  {
+    "title": "Relay Mini Wireless Earbuds",
+    "description": "Pocket-size Bluetooth earbuds with a compact charging case and clear everyday audio.",
+    "price": "2.50",
+    "sku": "RELAY-AUDIO-EARBUD-MINI",
+    "inventory": 30,
+    "productType": "Earbuds",
+    "tags": ["audio", "bluetooth", "earbuds", "wireless"]
+  },
+  {
+    "title": "Relay Sport TWS Earbuds",
+    "description": "Secure-fit true wireless earbuds for workouts, calls, and commuting.",
+    "price": "4.00",
+    "sku": "RELAY-AUDIO-EARBUD-SPORT",
+    "inventory": 24,
+    "productType": "Earbuds",
+    "tags": ["audio", "bluetooth", "earbuds", "sport", "wireless"]
+  },
+  {
+    "title": "Relay USB-C Wired Earphones",
+    "description": "Low-latency wired earphones with an inline microphone and USB-C connector.",
+    "price": "3.25",
+    "sku": "RELAY-AUDIO-USBC-WIRED",
+    "inventory": 35,
+    "productType": "Earphones",
+    "tags": ["audio", "earphones", "usb-c", "wired"]
+  },
+  {
+    "title": "Relay Foldable Bluetooth Headphones",
+    "description": "Lightweight over-ear headphones with a foldable frame and all-day battery.",
+    "price": "9.50",
+    "sku": "RELAY-AUDIO-HEADPHONE-FOLD",
+    "inventory": 18,
+    "productType": "Headphones",
+    "tags": ["audio", "bluetooth", "headphones", "wireless"]
+  },
+  {
+    "title": "Relay Pocket Bluetooth Speaker",
+    "description": "Portable wireless speaker with a durable shell and USB-C charging.",
+    "price": "5.50",
+    "sku": "RELAY-AUDIO-SPEAKER-POCKET",
+    "inventory": 22,
+    "productType": "Speakers",
+    "tags": ["audio", "bluetooth", "portable", "speaker"]
+  },
+  {
+    "title": "Relay Silent Wireless Mouse",
+    "description": "Compact 2.4 GHz wireless mouse with quiet clicks and an ambidextrous shape.",
+    "price": "6.50",
+    "sku": "RELAY-DESK-MOUSE-SILENT",
+    "inventory": 28,
+    "productType": "Computer Mice",
+    "tags": ["computer", "mouse", "office", "wireless"]
+  },
+  {
+    "title": "Relay Compact 65% Keyboard",
+    "description": "Space-saving USB-C keyboard with tactile keys and a compact 65 percent layout.",
+    "price": "12.00",
+    "sku": "RELAY-DESK-KEYBOARD-65",
+    "inventory": 16,
+    "productType": "Keyboards",
+    "tags": ["computer", "keyboard", "office", "usb-c"]
+  },
+  {
+    "title": "Relay 5000mAh Pocket Power Bank",
+    "description": "Slim portable battery with 5000mAh capacity and USB-C fast charging.",
+    "price": "7.00",
+    "sku": "RELAY-POWER-BANK-5K",
+    "inventory": 20,
+    "productType": "Power Banks",
+    "tags": ["battery", "charging", "portable", "power bank", "usb-c"]
+  },
+  {
+    "title": "Relay USB-C Travel Hub",
+    "description": "Compact multiport hub with HDMI, USB-A, and pass-through USB-C power.",
+    "price": "11.00",
+    "sku": "RELAY-USBC-HUB-TRAVEL",
+    "inventory": 15,
+    "productType": "USB Hubs",
+    "tags": ["computer", "hub", "travel", "usb-c"]
+  }
+]

@@ -39,6 +39,7 @@ Full spec: [`PRD.md`](./PRD.md) · workflow: [`docs/WORKFLOW.md`](./docs/WORKFLO
 ## Run / verify
 ```bash
 make setup            # pnpm install + python venv (agents/.venv)
+pnpm seed:catalog     # idempotently seed/publish the live Shopify demo catalog
 make check-wallets    # SOL (fees) + USDC balances for both wallets
 ./scripts/dev.sh      # all four services; buyer UI at http://localhost:8090
 ./scripts/demo.sh "wireless earbuds" 5

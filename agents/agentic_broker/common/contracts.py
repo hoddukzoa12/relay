@@ -37,6 +37,24 @@ class PurchaseIntent(BaseModel):
     shipTo: str
 
 
+class CatalogProduct(BaseModel):
+    """Real Shopify variant returned by the commerce catalog endpoint."""
+
+    productId: str
+    variantId: str
+    sku: str
+    title: str
+    description: str
+    price: str = Field(pattern=r"^\d+(\.\d{1,6})?$")
+    inventoryQuantity: int
+    status: Literal["ACTIVE"]
+    tags: list[str]
+
+
+class CatalogProductsResponse(BaseModel):
+    products: list[CatalogProduct]
+
+
 class PaymentRequest(BaseModel):
     """Step 3 — shopping -> buyer. The agent-native payment request."""
 
@@ -67,6 +85,7 @@ class IntentMandate(BaseModel):
 
 class CartItem(BaseModel):
     sku: str
+    variant_id: Optional[str] = None
     name: str
     price: Money
 

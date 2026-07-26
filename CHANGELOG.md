@@ -6,6 +6,15 @@ Format: [Keep a Changelog](https://keepachangelog.com/); versioning is SemVer-is
 
 ## [Unreleased]
 
+### Added
+- Added an idempotent Shopify catalog seed for nine demo electronics, live
+  catalog search, and published/inventory readback evidence (#25).
+
+### Changed
+- Grounded sourcing in in-stock, within-budget Shopify variants, carried the
+  real SKU/variant through CartMandate, and linked Shopify orders to the real
+  variant while preserving the broker resale price (#25).
+
 ### Fixed
 - Made payment references single-use with pending/paying/paid transitions,
   reconciled uncertain Solana confirmations without resending, and made broker

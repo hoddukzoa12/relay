@@ -45,6 +45,27 @@ export const PurchaseIntentSchema = z.object({
 });
 export type PurchaseIntent = z.infer<typeof PurchaseIntentSchema>;
 
+/** Commerce-service catalog variant used for grounded sourcing. */
+export const CatalogProductSchema = z.object({
+  productId: z.string(),
+  variantId: z.string(),
+  sku: z.string(),
+  title: z.string(),
+  description: z.string(),
+  price: z.string().regex(/^\d+(\.\d{1,6})?$/, "decimal string, ≤6 dp"),
+  inventoryQuantity: z.number().int(),
+  status: z.literal("ACTIVE"),
+  tags: z.array(z.string()),
+});
+export type CatalogProduct = z.infer<typeof CatalogProductSchema>;
+
+export const CatalogProductsResponseSchema = z.object({
+  products: z.array(CatalogProductSchema),
+});
+export type CatalogProductsResponse = z.infer<
+  typeof CatalogProductsResponseSchema
+>;
+
 // ---------------------------------------------------------------------------
 // AP2 mandates — carried as A2A DataParts alongside the existing REST contracts.
 // Field names follow google-agentic-commerce/AP2's v0.1 mandate types. Relay's
@@ -72,6 +93,7 @@ export type IntentMandate = z.infer<typeof IntentMandateSchema>;
 
 export const CartItemSchema = z.object({
   sku: z.string(),
+  variant_id: z.string().optional(),
   name: z.string(),
   price: MoneySchema,
 });

@@ -39,5 +39,6 @@ python -m agentic_broker.buyer.cli --query "wireless earbuds" --budget 25
 python -m agentic_broker.buyer.cli --text "Buy me earbuds under 20 USDC"
 ```
 
-Without `GOOGLE_API_KEY`, the Gemini helpers fall back to deterministic stubs so
-the pipeline still runs end-to-end — set the key to get real AI sourcing/parsing.
+Without `GOOGLE_API_KEY`, sourcing falls back to deterministic relevance over
+real catalog candidates and intent parsing uses a deterministic parser, so the
+pipeline still runs end-to-end without inventing products.

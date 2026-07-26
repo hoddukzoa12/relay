@@ -60,7 +60,7 @@ services/               TypeScript
   commerce/             Shopify Admin API (mock-able)            → :8082
 packages/shared/        canonical schemas + TS types (PRD §6)
 infra/                  docker-compose · Cloud Run
-scripts/                dev.sh · demo.sh · deploy-cloudrun.sh
+scripts/                catalog seed · dev.sh · demo.sh · deploy-cloudrun.sh
 wallets/                your solana keypairs (git-ignored)
 ```
 
@@ -71,7 +71,8 @@ wallets/                your solana keypairs (git-ignored)
 - **Solana CLI** (for keypairs / airdrops) — you already have wallets + devnet USDC
 - Optional now, needed for the full demo:
   - **Gemini API key** (free tier) — https://aistudio.google.com/apikey
-  - **Shopify dev store** + Admin API token with `read_orders` + `write_orders`
+  - **Shopify dev store** + Admin API token with order, product, and inventory
+    read/write scopes
   - **gcloud** for Cloud Run
 
 ## Setup
@@ -90,6 +91,9 @@ make setup                    # pnpm install + python venv (agents/.venv)
 
 # 4. Sanity-check balances (SOL for fees + devnet USDC)
 make check-wallets
+
+# 5. Live Shopify only: idempotently seed/publish the demo catalog
+pnpm seed:catalog
 ```
 
 > **USDC mint:** `.env` defaults to Circle's devnet USDC
@@ -133,10 +137,13 @@ This maps to PRD §5, steps 5–8 (the judging core):
 1. **Buyer → Shopping** A2A JSON-RPC `POST /a2a` `message/send` — sends a
    buyer-wallet-signed `IntentMandate` as an A2A DataPart. The original
    `POST /a2a/quote` route remains available for REST compatibility.
-2. **Shopping** sources a product + price (Gemini), then calls
+2. **Shopping** queries live Shopify variants, removes out-of-stock and
+   marked-up-over-budget candidates, then uses Gemini (or deterministic
+   relevance) only to rank real SKUs. It calls
    **payments** `POST /payment-requests` → mints a fresh `reference` pubkey and
    returns a merchant-wallet-signed `CartMandate` containing the unchanged
-   [PaymentRequest](packages/shared/schemas/payment-request.schema.json).
+   [PaymentRequest](packages/shared/schemas/payment-request.schema.json) plus
+   the selected real SKU and variant ID.
 3. **Buyer** verifies the CartMandate, signs a bound `PaymentMandate`, then calls
    **payments** `POST /pay` — the wallet **signs and broadcasts** a USDC SPL
    transfer tagged with the `reference` key. **No human approval.**
@@ -145,7 +152,8 @@ This maps to PRD §5, steps 5–8 (the judging core):
 5. **Shopping** calls **payments** `POST /verify` → `@solana/pay` `findReference`
    locates the tx and `validateTransfer` confirms **amount + recipient + reference**
    on-chain, trustlessly.
-6. **Shopping** calls **commerce** `POST /orders` → Shopify `orderCreate` +
+6. **Shopping** calls **commerce** `POST /orders` → Shopify `orderCreate` with
+   the real `variantId` and the broker resale `priceSet`, then
    `orderMarkAsPaid`, and returns an
    [OrderConfirmation](packages/shared/schemas/order-confirmation.schema.json)
    with the explorer link.
@@ -180,10 +188,12 @@ zero human clicks at payment, a `paid` Shopify order, a live URL, ≤3-min repro
 
 ## Progressive setup (works before everything is ready)
 
-- **No Gemini key?** Sourcing/parsing fall back to deterministic stubs — the flow
-  still completes. Set `GOOGLE_API_KEY` for real AI.
-- **No Shopify yet?** `COMMERCE_MOCK=true` (default) returns a mock order id — the
-  on-chain payment is still 100% real. Flip to `false` once your store is ready.
+- **No Gemini key?** Sourcing uses deterministic relevance over the same
+  catalog candidates; it never invents a product. Intent parsing also has a
+  deterministic fallback.
+- **No Shopify yet?** `COMMERCE_MOCK=true` (default) serves a fixed demo catalog
+  and returns a mock order id — the on-chain payment is still 100% real. Flip
+  to `false` and run `pnpm seed:catalog` once your store is ready.
 - **Wallets are required** for a real tx (you have them).
 
 ## Troubleshooting

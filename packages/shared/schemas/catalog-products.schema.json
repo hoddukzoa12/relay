@@ -1,0 +1,46 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://agentic-resell-broker/schemas/catalog-products.json",
+  "title": "CatalogProductsResponse",
+  "description": "Real Shopify variants returned by the commerce catalog endpoint for grounded sourcing.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["products"],
+  "properties": {
+    "products": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "productId",
+          "variantId",
+          "sku",
+          "title",
+          "description",
+          "price",
+          "inventoryQuantity",
+          "status",
+          "tags"
+        ],
+        "properties": {
+          "productId": { "type": "string" },
+          "variantId": { "type": "string" },
+          "sku": { "type": "string" },
+          "title": { "type": "string" },
+          "description": { "type": "string" },
+          "price": {
+            "type": "string",
+            "pattern": "^\\d+(\\.\\d{1,6})?$"
+          },
+          "inventoryQuantity": { "type": "integer" },
+          "status": { "const": "ACTIVE" },
+          "tags": {
+            "type": "array",
+            "items": { "type": "string" }
+          }
+        }
+      }
+    }
+  }
+}

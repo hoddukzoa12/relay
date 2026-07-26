@@ -28,6 +28,7 @@ class FulfillmentPendingError(RuntimeError):
 @dataclass
 class _OrderState:
     product_id: str
+    sku: str
     title: str
     amount: str
     reference: str
@@ -62,11 +63,14 @@ def handle_quote(intent: PurchaseIntent) -> PaymentRequest:
         )
 
     order_ref = _next_order_ref()
-    product_id = f"sku_{abs(hash(offer['title'])) % 10000}"
-    pr = tools.issue_payment_request(product_id, offer["title"], offer["price"], order_ref)
+    product_id = offer["variantId"]
+    pr = tools.issue_payment_request(
+        product_id, offer["title"], offer["price"], order_ref
+    )
 
     order = _OrderState(
         product_id=product_id,
+        sku=offer["sku"],
         title=offer["title"],
         amount=pr["price"]["amount"],
         reference=pr["reference"],
@@ -75,6 +79,15 @@ def handle_quote(intent: PurchaseIntent) -> PaymentRequest:
     with _orders_lock:
         _orders[order_ref] = order
     return PaymentRequest(**pr)
+
+
+def catalog_identity(order_ref: str) -> dict[str, str]:
+    """Return the real Shopify identity bound to an issued quote."""
+    with _orders_lock:
+        order = _orders.get(order_ref)
+    if not order:
+        raise ValueError(f"unknown quote {order_ref}")
+    return {"sku": order.sku, "variantId": order.product_id}
 
 
 def handle_settle(req: SettlementRequest) -> OrderConfirmation:
@@ -157,6 +170,7 @@ def handle_settle(req: SettlementRequest) -> OrderConfirmation:
         result = tools.record_order(
             order_ref=req.orderRef,
             product_id=order.product_id,
+            sku=order.sku,
             title=order.title,
             amount=order.amount,
             buyer_address=buyer_wallet,

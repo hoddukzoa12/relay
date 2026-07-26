@@ -22,8 +22,10 @@ def _post(url: str, payload: dict[str, Any]) -> dict[str, Any]:
     return resp.json()
 
 
-def _get(url: str) -> dict[str, Any]:
-    resp = httpx.get(url, timeout=_TIMEOUT)
+def _get(
+    url: str, params: Optional[dict[str, Any]] = None
+) -> dict[str, Any]:
+    resp = httpx.get(url, params=params, timeout=_TIMEOUT)
     resp.raise_for_status()
     return resp.json()
 
@@ -79,6 +81,13 @@ def payments_verify_mandate(
 
 
 # --- commerce service --------------------------------------------------------
+def commerce_products(query: str, limit: int = 20) -> dict[str, Any]:
+    return _get(
+        f"{settings.commerce_url}/products",
+        {"query": query, "limit": limit},
+    )
+
+
 def commerce_create_order(payload: dict[str, Any]) -> dict[str, Any]:
     return _post(f"{settings.commerce_url}/orders", payload)
 

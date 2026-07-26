@@ -45,9 +45,13 @@ class BrokerIdempotencyTest(unittest.TestCase):
                 broker.tools,
                 "source_and_price",
                 return_value={
+                    "productId": "gid://shopify/Product/1",
+                    "variantId": "gid://shopify/ProductVariant/1",
+                    "sku": "RELAY-TEST-1",
                     "title": "Test Product",
                     "cost": 1.0,
                     "price": 1.15,
+                    "inventoryQuantity": 10,
                     "overBudget": False,
                 },
             ),
@@ -57,7 +61,18 @@ class BrokerIdempotencyTest(unittest.TestCase):
                 side_effect=issue_payment_request,
             ),
         ):
-            return broker.handle_quote(intent)
+            quote = broker.handle_quote(intent)
+        self.assertEqual(
+            quote.productId, "gid://shopify/ProductVariant/1"
+        )
+        self.assertEqual(
+            broker.catalog_identity(quote.orderRef),
+            {
+                "sku": "RELAY-TEST-1",
+                "variantId": "gid://shopify/ProductVariant/1",
+            },
+        )
+        return quote
 
     def test_settle_replay_returns_original_confirmation(self) -> None:
         quote = self._quote()
