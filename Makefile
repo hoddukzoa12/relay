@@ -3,6 +3,7 @@
 
 .DEFAULT_GOAL := help
 SHELL := /bin/bash
+PYTHON ?= python3
 
 .PHONY: help setup setup-node setup-py env wallets \
         dev-payments dev-commerce dev-shopping dev-buy \
@@ -18,7 +19,7 @@ setup-node: ## Install TS workspace deps (pnpm)
 	pnpm install
 
 setup-py: ## Install Python agent deps into a venv
-	cd agents && python -m venv .venv && ./.venv/bin/pip install -U pip && ./.venv/bin/pip install -e .
+	cd agents && $(PYTHON) -m venv .venv && ./.venv/bin/pip install -U pip && ./.venv/bin/pip install -e .
 
 env: ## Create .env from template if missing
 	@test -f .env || (cp .env.example .env && echo "Created .env — fill it in.")

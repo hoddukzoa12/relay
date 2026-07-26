@@ -35,6 +35,7 @@
             "required": ["sku", "name", "price"],
             "properties": {
               "sku": { "type": "string" },
+              "variant_id": { "type": "string" },
               "name": { "type": "string" },
               "price": { "$ref": "#/$defs/money" }
             }

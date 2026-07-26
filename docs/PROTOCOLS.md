@@ -82,7 +82,7 @@ carried as A2A **DataParts**, keyed by type, e.g.
 | Mandate | Signed by | Contains (modeled on `ap2.types.mandate`) |
 |---|---|---|
 | **IntentMandate** | user (buyer) | `natural_language_description`, `merchants?`, `skus?`, `requires_refundability?`, price ceiling, `intent_expiry`, `user_cart_confirmation_required` |
-| **CartMandate** | **merchant** (shopping) | `contents`: cart_items `[{sku,name,price}]`, `total`, `currency`, shipping/tax, `refund_period`, `cart_expiry`, `merchant_name` |
+| **CartMandate** | **merchant** (shopping) | `contents`: real catalog cart_items `[{sku,variant_id,name,price}]`, `total`, `currency`, shipping/tax, `refund_period`, `cart_expiry`, `merchant_name` |
 | **PaymentMandate** | user (buyer) | payment method token, `amount`+`currency`, `merchant_name`, payer info, `timestamp`; bound to the Cart/Intent mandate |
 
 **Human-absent flow (ours):** user signs an IntentMandate with a price limit up

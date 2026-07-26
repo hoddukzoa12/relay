@@ -36,29 +36,79 @@ def _generate_json(prompt: str, fallback: dict[str, Any]) -> dict[str, Any]:
         return fallback
 
 
-def source_offer(query: str, budget_amount: float) -> dict[str, Any]:
-    """AI sourcing: pick a concrete product + a plausible wholesale cost.
+def _catalog_relevance(product: dict[str, Any], query: str) -> int:
+    tokens = set(re.findall(r"[a-z0-9]+", query.lower()))
+    title = str(product.get("title", "")).lower()
+    sku = str(product.get("sku", "")).lower()
+    searchable = " ".join(
+        [
+            title,
+            sku,
+            str(product.get("description", "")).lower(),
+            " ".join(str(tag).lower() for tag in product.get("tags", [])),
+        ]
+    )
+    return sum(
+        4
+        if token in title
+        else 3
+        if token in sku
+        else 1
+        if token in searchable
+        else 0
+        for token in tokens
+        if len(token) > 1
+    )
 
-    Returns {"title": str, "cost": float}. `cost` is what the broker pays;
-    the resale price (cost + markup) is computed by the caller.
-    """
-    fallback = {"title": query.strip().title(), "cost": round(budget_amount * 0.6, 2)}
+
+def source_offer(
+    query: str,
+    budget_amount: float,
+    candidates: list[dict[str, Any]],
+) -> dict[str, Any]:
+    """Choose one offer from catalog candidates without inventing products."""
+    if not candidates:
+        raise ValueError("no catalog candidates were supplied")
+
+    deterministic = sorted(
+        candidates,
+        key=lambda product: (
+            -_catalog_relevance(product, query),
+            float(product["price"]),
+            str(product["sku"]),
+        ),
+    )[0]
+    fallback = {"variantId": deterministic["variantId"]}
+    prompt_candidates = [
+        {
+            "variantId": product["variantId"],
+            "sku": product["sku"],
+            "title": product["title"],
+            "description": product.get("description", ""),
+            "price": product["price"],
+            "inventoryQuantity": product["inventoryQuantity"],
+        }
+        for product in candidates
+    ]
     prompt = (
-        "You are a sourcing agent for a headless resell broker. Given a shopper's "
-        f'request and their budget, propose ONE concrete product to source.\n'
+        "You are ranking real Shopify catalog variants for a headless resell "
+        "broker. Select exactly one candidate that best matches the request. "
+        "You MUST return a variantId from the supplied candidates and may not "
+        "invent or alter any product.\n"
         f'Request: "{query}"\nBudget (USDC): {budget_amount}\n'
-        "Return JSON ONLY: {\"title\": <specific product name>, "
-        "\"cost\": <wholesale cost in USDC as a number, comfortably below budget>}."
+        f"Candidates: {json.dumps(prompt_candidates, ensure_ascii=False)}\n"
+        'Return JSON ONLY: {"variantId": "<one supplied variantId>"}'
     )
     data = _generate_json(prompt, fallback)
-    title = str(data.get("title") or fallback["title"])[:120]
-    try:
-        cost = float(data.get("cost", fallback["cost"]))
-    except (TypeError, ValueError):
-        cost = fallback["cost"]
-    if cost <= 0:
-        cost = fallback["cost"]
-    return {"title": title, "cost": round(cost, 2)}
+    selected_id = str(data.get("variantId") or fallback["variantId"])
+    return next(
+        (
+            product
+            for product in candidates
+            if product["variantId"] == selected_id
+        ),
+        deterministic,
+    )
 
 
 def parse_purchase(text: str) -> dict[str, Any]:

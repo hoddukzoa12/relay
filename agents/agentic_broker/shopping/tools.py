@@ -6,10 +6,12 @@ directly as ADK function tools.
 """
 from __future__ import annotations
 
+from decimal import Decimal, InvalidOperation, ROUND_HALF_UP
 from typing import Any
 
 from ..common import llm, service_clients
 from ..common.config import settings
+from ..common.contracts import CatalogProductsResponse
 
 
 def _usd(x: float) -> str:
@@ -19,18 +21,68 @@ def _usd(x: float) -> str:
 def source_and_price(query: str, budget_amount: float) -> dict[str, Any]:
     """Source a product for `query` and set a resale price.
 
-    Uses Gemini to pick a concrete product + wholesale cost, then applies the
-    broker markup. The price is capped at the shopper's budget.
+    Retrieves real Shopify variants, removes unavailable/over-budget choices,
+    and uses Gemini (or deterministic relevance) only to rank that safe set.
 
-    Returns: {"title", "cost", "price", "overBudget"}.
+    Returns the selected real variant, SKU, cost, and marked-up sale price.
     """
-    offer = llm.source_offer(query, budget_amount)
-    cost = float(offer["cost"])
-    price = round(cost * (1 + settings.markup_pct / 100.0), 2)
-    over_budget = cost > budget_amount
-    if price > budget_amount and not over_budget:
-        price = round(budget_amount, 2)  # thin the margin rather than lose the sale
-    return {"title": offer["title"], "cost": cost, "price": price, "overBudget": over_budget}
+    try:
+        catalog = CatalogProductsResponse(
+            **service_clients.commerce_products(query, limit=50)
+        )
+    except Exception as exc:  # noqa: BLE001
+        print(f"[sourcing] catalog query failed; retrying full catalog ({exc})")
+        catalog = CatalogProductsResponse(
+            **service_clients.commerce_products("", limit=50)
+        )
+
+    budget = Decimal(str(budget_amount))
+    multiplier = Decimal("1") + Decimal(str(settings.markup_pct)) / Decimal("100")
+    candidates: list[dict[str, Any]] = []
+    for catalog_product in catalog.products:
+        product = catalog_product.model_dump()
+        try:
+            inventory = int(product["inventoryQuantity"])
+            cost = Decimal(str(product["price"]))
+        except (KeyError, TypeError, ValueError, InvalidOperation):
+            continue
+        if (
+            inventory <= 0
+            or cost <= 0
+            or not product.get("variantId")
+            or not product.get("sku")
+        ):
+            continue
+        sale_price = (cost * multiplier).quantize(
+            Decimal("0.01"), rounding=ROUND_HALF_UP
+        )
+        if sale_price > budget:
+            continue
+        candidates.append(
+            {
+                **product,
+                "price": float(cost),
+                "salePrice": float(sale_price),
+            }
+        )
+
+    if not candidates:
+        raise ValueError(
+            f"no in-stock catalog product is available within "
+            f"{budget_amount:.2f} USDC"
+        )
+
+    offer = llm.source_offer(query, budget_amount, candidates)
+    return {
+        "productId": offer["productId"],
+        "variantId": offer["variantId"],
+        "sku": offer["sku"],
+        "title": offer["title"],
+        "cost": offer["price"],
+        "price": offer["salePrice"],
+        "inventoryQuantity": offer["inventoryQuantity"],
+        "overBudget": False,
+    }
 
 
 def issue_payment_request(
@@ -56,6 +108,7 @@ def verify_payment(reference: str) -> dict[str, Any]:
 def record_order(
     order_ref: str,
     product_id: str,
+    sku: str,
     title: str,
     amount: str,
     buyer_address: str,
@@ -71,6 +124,8 @@ def record_order(
         {
             "orderRef": order_ref,
             "productId": product_id,
+            "variantId": product_id,
+            "sku": sku,
             "title": title,
             "amount": amount,
             "buyerAddress": buyer_address,

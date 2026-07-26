@@ -12,6 +12,7 @@
     "dev:payments": "pnpm --filter @arb/payments dev",
     "dev:commerce": "pnpm --filter @arb/commerce dev",
     "dev:services": "pnpm -r --parallel --filter \"./services/*\" dev",
+    "seed:catalog": "node scripts/seed-shopify-catalog.mjs",
     "build": "pnpm -r build",
     "typecheck": "pnpm -r typecheck",
     "compose:up": "docker compose -f infra/docker-compose.yml up --build",

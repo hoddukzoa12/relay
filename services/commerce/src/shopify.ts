@@ -2,7 +2,9 @@ import { config } from "./config.js";
 
 export interface OrderInput {
   orderRef: string;
-  productId: string;
+  productId: string; // retained for compatibility; contains the variant id
+  variantId?: string;
+  sku?: string;
   title: string;
   amount: string; // USDC decimal string paid on-chain
   buyerAddress: string; // buyer wallet pubkey
@@ -21,7 +23,10 @@ interface GraphQLError {
   message: string;
 }
 
-async function shopifyGraphQL<T>(query: string, variables: Record<string, unknown>): Promise<T> {
+export async function shopifyGraphQL<T>(
+  query: string,
+  variables: Record<string, unknown>,
+): Promise<T> {
   const url = `https://${config.shopify.domain}/admin/api/${config.shopify.apiVersion}/graphql.json`;
   const res = await fetch(url, {
     method: "POST",
@@ -41,8 +46,8 @@ async function shopifyGraphQL<T>(query: string, variables: Record<string, unknow
   return json.data as T;
 }
 
-// PRD §5, Step 9 — orderCreate. A custom line item carries our resale price;
-// on-chain payment metadata is attached as order attributes + note.
+// PRD §5, Step 9 — orderCreate. The real catalog variant stays attached while
+// priceSet records the broker's marked-up resale price.
 const ORDER_CREATE = /* GraphQL */ `
   mutation OrderCreate($order: OrderCreateOrderInput!) {
     orderCreate(order: $order) {
@@ -105,8 +110,9 @@ let mockCounter = 1000;
 const completedOrders = new Map<string, OrderResult>();
 const inFlightOrders = new Map<string, Promise<OrderResult>>();
 
-function orderTag(orderRef: string): string {
-  return `relay_order_ref_${orderRef}`;
+export function orderTag(orderRef: string): string {
+  const compactRef = orderRef.startsWith("ord_") ? orderRef.slice(4) : orderRef;
+  return `relay_${compactRef}`.slice(0, 40);
 }
 
 async function findOrderByRef(orderRef: string): Promise<ShopifyOrder | null> {
@@ -147,7 +153,7 @@ async function createOrder(input: OrderInput): Promise<ShopifyOrder> {
       currency: config.shopify.currency,
       lineItems: [
         {
-          title: input.title,
+          variantId: input.variantId ?? input.productId,
           quantity: 1,
           priceSet: {
             shopMoney: { amount: input.amount, currencyCode: config.shopify.currency },
@@ -163,6 +169,8 @@ async function createOrder(input: OrderInput): Promise<ShopifyOrder> {
         { key: "network", value: `solana-${config.cluster}` },
         { key: "buyer_wallet", value: input.buyerAddress },
         { key: "ship_to", value: input.shipTo },
+        { key: "variant_id", value: input.variantId ?? input.productId },
+        { key: "sku", value: input.sku ?? "" },
       ],
     },
   });
