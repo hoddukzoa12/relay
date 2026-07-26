@@ -15,6 +15,29 @@ function req(name: string): string {
   return v;
 }
 
+interface WalletSecretBundle {
+  MERCHANT_WALLET_SECRET: string;
+  BUYER_WALLET_SECRET: string;
+}
+
+function readWalletSecretBundle(): WalletSecretBundle | undefined {
+  const path = process.env.WALLET_SECRET_BUNDLE_PATH;
+  if (!path) return undefined;
+
+  const parsed = JSON.parse(readFileSync(path, "utf8")) as Partial<WalletSecretBundle>;
+  if (
+    !parsed.MERCHANT_WALLET_SECRET ||
+    !parsed.BUYER_WALLET_SECRET
+  ) {
+    throw new Error(
+      "Wallet secret bundle must contain MERCHANT_WALLET_SECRET and BUYER_WALLET_SECRET",
+    );
+  }
+  return parsed as WalletSecretBundle;
+}
+
+const walletSecretBundle = readWalletSecretBundle();
+
 export const config = {
   port: Number(process.env.PAYMENTS_PORT ?? 8081),
   rpcUrl: process.env.SOLANA_RPC_URL ?? "https://api.devnet.solana.com",
@@ -25,11 +48,15 @@ export const config = {
   paymentTtlMin: Number(process.env.PAYMENT_REQUEST_TTL_MIN ?? 15),
   merchant: {
     keypairPath: process.env.MERCHANT_WALLET_KEYPAIR_PATH,
-    secret: process.env.MERCHANT_WALLET_SECRET,
+    secret:
+      process.env.MERCHANT_WALLET_SECRET ??
+      walletSecretBundle?.MERCHANT_WALLET_SECRET,
   },
   buyer: {
     keypairPath: process.env.BUYER_WALLET_KEYPAIR_PATH,
-    secret: process.env.BUYER_WALLET_SECRET,
+    secret:
+      process.env.BUYER_WALLET_SECRET ??
+      walletSecretBundle?.BUYER_WALLET_SECRET,
   },
 };
 

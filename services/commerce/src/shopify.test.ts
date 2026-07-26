@@ -11,6 +11,7 @@ import {
 } from "./shopify-client.js";
 import {
   createPaidOrder,
+  isTemporaryOrderMutationError,
   listOrdersByWallet,
   orderTag,
   type OrderInput,
@@ -133,6 +134,24 @@ test("Shopify idempotency tags stay within the platform limit", () => {
 
   assert.equal(tag, `relay_${"a".repeat(32)}`);
   assert.ok(tag.length <= 40);
+});
+
+test("only Shopify's transient order mutation error is retryable", () => {
+  assert.equal(
+    isTemporaryOrderMutationError([
+      {
+        field: ["id"],
+        message: "Order is temporarily unavailable to be modified.",
+      },
+    ]),
+    true,
+  );
+  assert.equal(
+    isTemporaryOrderMutationError([
+      { field: ["id"], message: "Order does not exist." },
+    ]),
+    false,
+  );
 });
 
 test("Shopify token provider coalesces concurrent fetches and reuses its cache", async () => {

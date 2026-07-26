@@ -18,6 +18,11 @@ RESPONSE=$(curl -sS -X POST "$BUYER/buy" \
   -d "{\"query\":\"${QUERY}\",\"budget\":${BUDGET}}")
 
 if command -v jq >/dev/null 2>&1; then
+  if ! echo "$RESPONSE" | jq -e . >/dev/null 2>&1; then
+    echo "buyer returned a non-JSON error response:" >&2
+    printf '%s\n' "$RESPONSE" >&2
+    exit 1
+  fi
   echo "$RESPONSE" | jq .
   echo
   STATUS=$(echo "$RESPONSE" | jq -r '.confirmation.status // .reason')
