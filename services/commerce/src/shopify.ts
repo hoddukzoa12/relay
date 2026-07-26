@@ -1,4 +1,5 @@
 import { config } from "./config.js";
+import { ShopifyAdminClient } from "./shopify-client.js";
 
 export interface OrderInput {
   orderRef: string;
@@ -19,31 +20,13 @@ export interface OrderResult {
   mocked: boolean;
 }
 
-interface GraphQLError {
-  message: string;
-}
+const shopifyAdmin = new ShopifyAdminClient(config.shopify);
 
 export async function shopifyGraphQL<T>(
   query: string,
   variables: Record<string, unknown>,
 ): Promise<T> {
-  const url = `https://${config.shopify.domain}/admin/api/${config.shopify.apiVersion}/graphql.json`;
-  const res = await fetch(url, {
-    method: "POST",
-    headers: {
-      "Content-Type": "application/json",
-      "X-Shopify-Access-Token": config.shopify.token,
-    },
-    body: JSON.stringify({ query, variables }),
-  });
-  if (!res.ok) {
-    throw new Error(`Shopify HTTP ${res.status}: ${await res.text()}`);
-  }
-  const json = (await res.json()) as { data?: T; errors?: GraphQLError[] };
-  if (json.errors?.length) {
-    throw new Error(`Shopify GraphQL: ${json.errors.map((e) => e.message).join("; ")}`);
-  }
-  return json.data as T;
+  return shopifyAdmin.graphql<T>(query, variables);
 }
 
 // PRD §5, Step 9 — orderCreate. The real catalog variant stays attached while

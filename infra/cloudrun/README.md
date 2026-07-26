@@ -5,7 +5,7 @@ Four services, one region (Seoul = `asia-northeast3`):
 | Service   | Port | Public? | Notes |
 |-----------|------|---------|-------|
 | payments  | 8081 | internal (or public for debug) | holds wallet keys — treat as sensitive |
-| commerce  | 8082 | internal | holds Shopify token |
+| commerce  | 8082 | internal | holds Shopify client credentials |
 | shopping  | 8091 | internal | broker agent |
 | buyer     | 8090 | **public** | this URL is your demo link |
 
@@ -18,7 +18,8 @@ Store in Secret Manager and mount:
 gcloud secrets create merchant-wallet --data-file=- <<< "$MERCHANT_BASE58"
 gcloud secrets create buyer-wallet    --data-file=- <<< "$BUYER_BASE58"
 gcloud secrets create gemini-key      --data-file=- <<< "$GOOGLE_API_KEY"
-gcloud secrets create shopify-token   --data-file=- <<< "$SHOPIFY_ADMIN_ACCESS_TOKEN"
+gcloud secrets create shopify-client-id     --data-file=- <<< "$SHOPIFY_CLIENT_ID"
+gcloud secrets create shopify-client-secret --data-file=- <<< "$SHOPIFY_CLIENT_SECRET"
 
 # then, per service:
 gcloud run services update payments --region asia-northeast3 \
@@ -28,9 +29,13 @@ gcloud run services update shopping --region asia-northeast3 \
 gcloud run services update buyer --region asia-northeast3 \
   --set-secrets GOOGLE_API_KEY=gemini-key:latest
 gcloud run services update commerce --region asia-northeast3 \
-  --set-secrets SHOPIFY_ADMIN_ACCESS_TOKEN=shopify-token:latest \
+  --set-secrets SHOPIFY_CLIENT_ID=shopify-client-id:latest,SHOPIFY_CLIENT_SECRET=shopify-client-secret:latest \
   --set-env-vars COMMERCE_MOCK=false,SHOPIFY_STORE_DOMAIN=your-store.myshopify.com
 ```
+
+Legacy stores may instead mount an existing static Admin API token as
+`SHOPIFY_ADMIN_ACCESS_TOKEN`; when both auth paths are configured, the static
+token takes precedence.
 
 > On Cloud Run, supply wallets via `*_WALLET_SECRET` (base58), not the
 > `*_KEYPAIR_PATH` files — there is no repo `./wallets` dir in the container.

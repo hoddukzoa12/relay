@@ -3,6 +3,7 @@
 import { readFileSync } from "node:fs";
 import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
+import { ShopifyAdminClient } from "../services/commerce/src/shopify-client.ts";
 
 const here = dirname(fileURLToPath(import.meta.url));
 const repoRoot = resolve(here, "..");
@@ -28,11 +29,13 @@ function loadEnv(path) {
 loadEnv(resolve(repoRoot, ".env"));
 
 const domain = process.env.SHOPIFY_STORE_DOMAIN;
-const token = process.env.SHOPIFY_ADMIN_ACCESS_TOKEN;
+const adminAccessToken = process.env.SHOPIFY_ADMIN_ACCESS_TOKEN;
+const clientId = process.env.SHOPIFY_CLIENT_ID;
+const clientSecret = process.env.SHOPIFY_CLIENT_SECRET;
 const apiVersion = process.env.SHOPIFY_API_VERSION ?? "2025-01";
-if (!domain || !token) {
+if (!domain || (!adminAccessToken && !(clientId && clientSecret))) {
   throw new Error(
-    "SHOPIFY_STORE_DOMAIN and SHOPIFY_ADMIN_ACCESS_TOKEN are required in .env",
+    "SHOPIFY_STORE_DOMAIN and either SHOPIFY_ADMIN_ACCESS_TOKEN or both SHOPIFY_CLIENT_ID and SHOPIFY_CLIENT_SECRET are required in .env",
   );
 }
 
@@ -42,27 +45,16 @@ const seedCatalog = JSON.parse(
     "utf8",
   ),
 );
-const endpoint = `https://${domain}/admin/api/${apiVersion}/graphql.json`;
+const shopifyAdmin = new ShopifyAdminClient({
+  domain,
+  apiVersion,
+  adminAccessToken,
+  clientId,
+  clientSecret,
+});
 
 async function shopify(query, variables = {}) {
-  const response = await fetch(endpoint, {
-    method: "POST",
-    headers: {
-      "Content-Type": "application/json",
-      "X-Shopify-Access-Token": token,
-    },
-    body: JSON.stringify({ query, variables }),
-  });
-  const payload = await response.json();
-  if (!response.ok) {
-    throw new Error(
-      `Shopify HTTP ${response.status}: ${JSON.stringify(payload)}`,
-    );
-  }
-  if (payload.errors?.length) {
-    throw new Error(`Shopify GraphQL: ${JSON.stringify(payload.errors)}`);
-  }
-  return payload.data;
+  return shopifyAdmin.graphql(query, variables);
 }
 
 function requireMutation(result, name) {
