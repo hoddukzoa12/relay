@@ -1,6 +1,6 @@
 # Cloud Run deployment
 
-Four services, one region (Seoul = `asia-northeast3`):
+Four services, one region (Seoul = `us-central1`):
 
 | Service   | Port | Public? | Notes |
 |-----------|------|---------|-------|
@@ -22,13 +22,13 @@ gcloud secrets create shopify-client-id     --data-file=- <<< "$SHOPIFY_CLIENT_I
 gcloud secrets create shopify-client-secret --data-file=- <<< "$SHOPIFY_CLIENT_SECRET"
 
 # then, per service:
-gcloud run services update payments --region asia-northeast3 \
+gcloud run services update payments --region us-central1 \
   --set-secrets MERCHANT_WALLET_SECRET=merchant-wallet:latest,BUYER_WALLET_SECRET=buyer-wallet:latest
-gcloud run services update shopping --region asia-northeast3 \
+gcloud run services update shopping --region us-central1 \
   --set-secrets GOOGLE_API_KEY=gemini-key:latest
-gcloud run services update buyer --region asia-northeast3 \
+gcloud run services update buyer --region us-central1 \
   --set-secrets GOOGLE_API_KEY=gemini-key:latest
-gcloud run services update commerce --region asia-northeast3 \
+gcloud run services update commerce --region us-central1 \
   --set-secrets SHOPIFY_CLIENT_ID=shopify-client-id:latest,SHOPIFY_CLIENT_SECRET=shopify-client-secret:latest \
   --set-env-vars COMMERCE_MOCK=false,SHOPIFY_STORE_DOMAIN=your-store.myshopify.com
 ```
@@ -47,13 +47,13 @@ token takes precedence.
 After the first deploy, set each service's outbound URLs to the deployed peers:
 
 ```bash
-PAY=$(gcloud run services describe payments --region asia-northeast3 --format 'value(status.url)')
-COM=$(gcloud run services describe commerce --region asia-northeast3 --format 'value(status.url)')
-SHOP=$(gcloud run services describe shopping --region asia-northeast3 --format 'value(status.url)')
+PAY=$(gcloud run services describe payments --region us-central1 --format 'value(status.url)')
+COM=$(gcloud run services describe commerce --region us-central1 --format 'value(status.url)')
+SHOP=$(gcloud run services describe shopping --region us-central1 --format 'value(status.url)')
 
-gcloud run services update shopping --region asia-northeast3 \
+gcloud run services update shopping --region us-central1 \
   --set-env-vars "PAYMENTS_SERVICE_URL=$PAY,COMMERCE_SERVICE_URL=$COM"
-gcloud run services update buyer --region asia-northeast3 \
+gcloud run services update buyer --region us-central1 \
   --set-env-vars "PAYMENTS_SERVICE_URL=$PAY,SHOPPING_AGENT_URL=$SHOP"
 ```
 

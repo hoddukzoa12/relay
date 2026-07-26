@@ -10,7 +10,12 @@ set -euo pipefail
 cd "$(dirname "$0")/.."
 
 PROJECT_ID="${PROJECT_ID:?set PROJECT_ID}"
-REGION="${REGION:-asia-northeast3}"   # Seoul
+# us-central1 on purpose: Cloud Run's Always Free tier (2M requests,
+# 180k vCPU-seconds, 360k GiB-seconds per month) applies only in select US
+# regions — asia-northeast3 (Seoul) bills from the first request. Demo traffic
+# is orders of magnitude below the free limits, so this keeps the bill at $0.
+# Do NOT set --min-instances: an always-on instance blows past the free tier.
+REGION="${REGION:-us-central1}"
 REPO="gcr.io/${PROJECT_ID}"
 
 build_and_deploy() {
