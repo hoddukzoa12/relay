@@ -8,12 +8,20 @@ from __future__ import annotations
 from typing import Any
 
 from ..common import llm
+from ..common.contracts import IntentMandate
 from . import tools
 
 
-def buy(query: str, budget: float, ship_to: str) -> dict[str, Any]:
+def buy(
+    query: str,
+    budget: float,
+    ship_to: str,
+    *,
+    intent_mandate: IntentMandate | None = None,
+    identity_wallet: str | None = None,
+) -> dict[str, Any]:
     # Step 1–3: request a quote / agent-native payment request.
-    quote = tools.request_quote(query, budget, ship_to)
+    quote = tools.request_quote(query, budget, ship_to, intent_mandate)
 
     # Buyer-side guardrail: never overpay the budget it was delegated.
     price = float(quote["price"]["amount"])
@@ -46,7 +54,12 @@ def buy(query: str, budget: float, ship_to: str) -> dict[str, Any]:
 
     return {
         "ok": confirmation.get("status") == "paid",
-        "intent": {"query": query, "budget": budget, "shipTo": ship_to},
+        "intent": {
+            "query": query,
+            "budget": budget,
+            "shipTo": ship_to,
+            **({"delegatedBy": identity_wallet} if identity_wallet else {}),
+        },
         "quote": quote,
         "payment": payment,
         "confirmation": confirmation,

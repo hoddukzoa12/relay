@@ -1,0 +1,41 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://agentic-resell-broker/schemas/wallet-orders.json",
+  "title": "WalletOrdersResponse",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["orders"],
+  "properties": {
+    "orders": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "shopifyOrderId",
+          "name",
+          "status",
+          "createdAt",
+          "orderRef",
+          "title",
+          "amount",
+          "buyerWallet",
+          "txSignature",
+          "explorer"
+        ],
+        "properties": {
+          "shopifyOrderId": { "type": "string" },
+          "name": { "type": "string" },
+          "status": { "type": "string" },
+          "createdAt": { "type": "string", "format": "date-time" },
+          "orderRef": { "type": "string" },
+          "title": { "type": "string" },
+          "amount": { "type": "string" },
+          "buyerWallet": { "type": "string" },
+          "txSignature": { "type": "string" },
+          "explorer": { "type": "string" }
+        }
+      }
+    }
+  }
+}

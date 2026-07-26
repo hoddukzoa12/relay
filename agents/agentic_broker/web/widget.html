@@ -127,6 +127,49 @@
       }
 
       .address-input:focus { border-color: var(--relay-accent); }
+      .identity-line {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        gap: 16px;
+        margin-top: 18px;
+        padding: 12px 0;
+        border-bottom: 1px solid var(--relay-rule);
+      }
+      .identity-copy { min-width: 0; }
+      .identity-label { display: block; color: var(--relay-muted); font-size: 10px; }
+      .identity-wallet {
+        display: block;
+        overflow: hidden;
+        max-width: 430px;
+        margin-top: 3px;
+        font: 500 11px/1.35 ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+        text-overflow: ellipsis;
+        white-space: nowrap;
+      }
+      .identity-actions { display: flex; flex: 0 0 auto; gap: 7px; }
+      .identity-button {
+        padding: 7px 9px;
+        border: 1px solid var(--relay-rule);
+        background: transparent;
+        color: var(--relay-ink);
+        cursor: pointer;
+        font-size: 10px;
+        font-weight: 600;
+      }
+      .identity-button:hover:not(:disabled) { border-color: var(--relay-accent); color: var(--relay-accent); }
+      .identity-button:disabled { cursor: not-allowed; opacity: .5; }
+      .orders {
+        margin-top: 14px;
+        padding: 12px;
+        border: 1px solid var(--relay-rule);
+        color: var(--relay-muted);
+        font-size: 11px;
+      }
+      .orders[hidden] { display: none; }
+      .order + .order { margin-top: 9px; padding-top: 9px; border-top: 1px solid var(--relay-rule); }
+      .order strong { display: block; color: var(--relay-ink); }
+      .order a { color: var(--relay-accent); }
       .wallet-line {
         display: flex;
         align-items: flex-start;
@@ -277,7 +320,7 @@
       @media (max-width: 620px) {
         .brief { grid-template-columns: 1fr; }
         .brief-cell + .brief-cell { border-top: 1px solid var(--relay-rule); border-left: 0; }
-        .wallet-line, .proof-main { align-items: flex-start; flex-direction: column; }
+        .identity-line, .wallet-line, .proof-main { align-items: flex-start; flex-direction: column; }
         .wallet-summary { text-align: left; }
         .step { grid-template-columns: 28px minmax(0, 1fr); gap: 10px; }
         .step-top { align-items: flex-start; flex-direction: column; gap: 6px; }
@@ -316,6 +359,17 @@
       <div class="action">
         <label class="address-label" for="ship-to">Ship to</label>
         <input class="address-input" id="ship-to" autocomplete="street-address" />
+        <div class="identity-line">
+          <div class="identity-copy">
+            <span class="identity-label">Human identity · Clerk + Solana</span>
+            <span class="identity-wallet" id="human-wallet">Optional — agent API remains available without sign-in</span>
+          </div>
+          <div class="identity-actions">
+            <button class="identity-button" id="orders-button" type="button" disabled>My orders</button>
+            <button class="identity-button" id="auth-button" type="button">Wallet sign-in</button>
+          </div>
+        </div>
+        <div class="orders" id="orders" hidden></div>
         <div class="wallet-line">
           <span class="bracket" id="wallet-state">[ CONNECTING ]</span>
           <span class="wallet-summary" id="wallet-summary">Buyer wallet · checking balance</span>
@@ -392,6 +446,8 @@
       this.$ = (selector) => this.shadowRoot.querySelector(selector);
       this.cluster = "devnet";
       this.walletAddress = "";
+      this.identity = null;
+      this.authClient = null;
       this.baseUrl = this.cleanBaseUrl(this.getAttribute("agent-base-url") || "");
 
       const configuredQuery = this.getAttribute("product-query") || "";
@@ -405,7 +461,10 @@
         : (configuredBudget.trim() || "25");
       this.$("#ship-to").value = configuredShipTo.trim() || "Google Startup Campus, Seoul, KR";
       this.$("#buy").addEventListener("click", () => this.buy());
+      this.$("#auth-button").addEventListener("click", () => this.toggleAuth());
+      this.$("#orders-button").addEventListener("click", () => this.loadOrders());
       this.loadWallet();
+      this.loadAuth();
     }
 
     cleanBaseUrl(value) {
@@ -477,6 +536,109 @@
       } catch (error) {
         this.$("#wallet-state").textContent = "[ WALLET UNAVAILABLE ]";
         this.$("#wallet-summary").textContent = this.errorMessage(error);
+      }
+    }
+
+    async loadAuthScript() {
+      if (window.RelayAuth) return;
+      await new Promise((resolve, reject) => {
+        const src = `${this.baseUrl}/auth-client.js`;
+        const existing = [...document.scripts].find((script) => script.src === src);
+        if (existing) {
+          existing.addEventListener("load", resolve, { once: true });
+          existing.addEventListener("error", reject, { once: true });
+          return;
+        }
+        const script = document.createElement("script");
+        script.src = src;
+        script.crossOrigin = "anonymous";
+        script.onload = resolve;
+        script.onerror = () => reject(new Error("Unable to load Relay wallet identity."));
+        document.head.append(script);
+      });
+    }
+
+    updateIdentity(identity) {
+      this.identity = identity;
+      const wallet = this.$("#human-wallet");
+      const authButton = this.$("#auth-button");
+      const ordersButton = this.$("#orders-button");
+      if (identity?.walletAddress) {
+        wallet.textContent = identity.walletAddress;
+        wallet.title = identity.walletAddress;
+        authButton.textContent = "Sign out";
+        ordersButton.disabled = false;
+      } else {
+        wallet.textContent = "Optional — agent API remains available without sign-in";
+        wallet.title = "";
+        authButton.textContent = "Wallet sign-in";
+        ordersButton.disabled = true;
+        this.$("#orders").hidden = true;
+      }
+    }
+
+    async loadAuth() {
+      if (!this.isConfigured()) return;
+      try {
+        await this.loadAuthScript();
+        this.authClient = window.RelayAuth.client(this.baseUrl);
+        this.authClient.subscribe((identity) => this.updateIdentity(identity));
+        const status = await this.authClient.ready;
+        if (!status.configured) {
+          this.$("#auth-button").disabled = true;
+          this.$("#auth-button").textContent = "Clerk not configured";
+        }
+      } catch (error) {
+        this.$("#auth-button").disabled = true;
+        this.$("#human-wallet").textContent = this.errorMessage(error);
+      }
+    }
+
+    async toggleAuth() {
+      try {
+        if (!this.authClient) await this.loadAuth();
+        if (this.identity) await this.authClient.signOut();
+        else await this.authClient.signIn();
+      } catch (error) {
+        this.$("#human-wallet").textContent = this.errorMessage(error);
+      }
+    }
+
+    renderOrders(orders) {
+      const container = this.$("#orders");
+      container.replaceChildren();
+      if (!orders.length) {
+        container.textContent = "No orders are recorded for this wallet.";
+        return;
+      }
+      orders.forEach((order) => {
+        const row = document.createElement("div");
+        row.className = "order";
+        const title = document.createElement("strong");
+        title.textContent = `${order.name} · ${order.title || "Relay order"}`;
+        const meta = document.createElement("span");
+        meta.textContent = `${order.amount} USDC · ${order.status} · `;
+        const link = document.createElement("a");
+        link.textContent = "Explorer ↗";
+        link.href = order.explorer;
+        link.target = "_blank";
+        link.rel = "noopener noreferrer";
+        row.append(title, meta, link);
+        container.append(row);
+      });
+    }
+
+    async loadOrders() {
+      const container = this.$("#orders");
+      container.hidden = false;
+      container.textContent = "Loading wallet orders…";
+      try {
+        const response = await this.authClient.signedRequest("/my-orders");
+        const payload = await response.json();
+        if (!response.ok) throw new Error(payload.detail || `HTTP ${response.status}`);
+        this.renderOrders(payload.orders || []);
+      } catch (error) {
+        container.textContent = this.errorMessage(error);
       }
     }
 
@@ -668,11 +830,29 @@
       ]);
 
       try {
-        const result = await this.fetchJson("/buy", {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ query, budget, shipTo }),
-        });
+        const payload = { query, budget, shipTo };
+        let result;
+        if (this.identity) {
+          button.firstElementChild.textContent = "Approve one IntentMandate";
+          payload.intentMandate = await this.authClient.signIntent(payload);
+          button.firstElementChild.textContent = "Agent settlement in progress";
+          const response = await this.authClient.signedRequest("/buy", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify(payload),
+          });
+          const responsePayload = await response.json();
+          if (!response.ok) {
+            throw new Error(this.errorMessage(responsePayload.detail || `HTTP ${response.status}`));
+          }
+          result = responsePayload;
+        } else {
+          result = await this.fetchJson("/buy", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify(payload),
+          });
+        }
         await this.renderResult(result, budget);
       } catch (error) {
         this.renderFailure(error);

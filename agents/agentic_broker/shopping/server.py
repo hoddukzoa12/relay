@@ -23,6 +23,7 @@ from ..common.contracts import (
     PurchaseIntent,
     SettlementRequest,
 )
+from ..common.mandates import verify_wallet_signature
 from . import broker
 
 app = FastAPI(title="Shopping Broker Agent", version="0.1.0")
@@ -98,16 +99,26 @@ def _parse_expiry(value: str) -> datetime:
 
 def _handle_intent(message: dict[str, Any], data: dict[str, Any]) -> dict[str, Any]:
     intent = IntentMandate(**data[INTENT_MANDATE_DATA_KEY])
-    verification = service_clients.payments_verify_mandate(
-        intent.model_dump(exclude_none=True), "buyer"
-    )
-    if not verification.get("valid"):
-        raise ValueError("invalid buyer signature on IntentMandate")
+    intent_data = intent.model_dump(exclude_none=True)
+    if intent.signer_wallet:
+        if not verify_wallet_signature(
+            intent_data, intent.signature, intent.signer_wallet
+        ):
+            raise ValueError("invalid human wallet signature on IntentMandate")
+        signer = intent.signer_wallet
+    else:
+        verification = service_clients.payments_verify_mandate(
+            intent_data, "buyer"
+        )
+        if not verification.get("valid"):
+            raise ValueError("invalid buyer signature on IntentMandate")
+        signer = verification.get("publicKey", "")
     if _parse_expiry(intent.intent_expiry) <= datetime.now(timezone.utc):
         raise ValueError("IntentMandate has expired")
     _LOG.info(
-        "[ap2] IntentMandate verified signer=buyer publicKey=%s",
-        verification.get("publicKey"),
+        "[ap2] IntentMandate verified signer=%s publicKey=%s",
+        "human" if intent.signer_wallet else "buyer-agent",
+        signer,
     )
 
     payment_request = broker.handle_quote(
@@ -154,6 +165,7 @@ def _handle_intent(message: dict[str, Any], data: dict[str, Any]) -> dict[str, A
         "amount": payment_request.price.model_dump(),
         "cart_mandate_signature": cart.signature,
         "intent_mandate_signature": intent.signature,
+        "identity_wallet": intent.signer_wallet,
     }
     return _task(
         message,
@@ -191,7 +203,10 @@ def _handle_payment(message: dict[str, Any], data: dict[str, Any]) -> dict[str, 
     if contents.intent_mandate_signature != expected["intent_mandate_signature"]:
         raise ValueError("PaymentMandate is not bound to the accepted IntentMandate")
 
-    confirmation = broker.handle_settle(settlement)
+    confirmation = broker.handle_settle(
+        settlement,
+        identity_wallet=expected.get("identity_wallet"),
+    )
     return _task(
         message,
         state="completed",

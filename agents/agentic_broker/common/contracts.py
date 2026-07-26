@@ -55,6 +55,23 @@ class CatalogProductsResponse(BaseModel):
     products: list[CatalogProduct]
 
 
+class WalletOrder(BaseModel):
+    shopifyOrderId: str
+    name: str
+    status: str
+    createdAt: str
+    orderRef: str
+    title: str
+    amount: str
+    buyerWallet: str
+    txSignature: str
+    explorer: str
+
+
+class WalletOrdersResponse(BaseModel):
+    orders: list[WalletOrder]
+
+
 class PaymentRequest(BaseModel):
     """Step 3 — shopping -> buyer. The agent-native payment request."""
 
@@ -80,6 +97,9 @@ class IntentMandate(BaseModel):
     price_ceiling: Money
     ship_to: str
     intent_expiry: str
+    # Present when a signed-in human delegates; absent on the legacy agent-only
+    # path, where the configured payments buyer wallet remains the signer.
+    signer_wallet: Optional[str] = None
     signature: str = Field(min_length=1)
 
 

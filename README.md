@@ -14,6 +14,8 @@ one sentence the whole design defends.
 
 **A2A로 협상 · AP2 mandate로 인가 · Solana Pay로 정산.** (USDC 온체인)
 
+**계정도 비밀번호도 없다. 지갑이 곧 계정이고, 서명이 곧 로그인.**
+
 ---
 
 ## Architecture
@@ -80,6 +82,8 @@ wallets/                your solana keypairs (git-ignored)
 ```bash
 # 1. Config
 cp .env.example .env          # then edit — at minimum confirm USDC_MINT + wallet paths
+# For wallet identity, also set CLERK_PUBLISHABLE_KEY, CLERK_SECRET_KEY,
+# CLERK_ISSUER, and CLERK_JWKS_URL.
 
 # 2. Wallets (you already have these)
 mkdir -p wallets
@@ -125,6 +129,32 @@ cd agents && ./.venv/bin/python -m agentic_broker.buyer.cli --query "wireless ea
 
 You get back a `txSignature` and an **explorer link** — the on-chain proof.
 
+### Optional human wallet identity and delegation
+
+The console and Shopify widget can add a human identity without making sign-in
+mandatory for agents:
+
+1. Select **Wallet sign-in**. Clerk performs Sign in with Solana and also acts
+   as Shopify's configured OIDC identity provider.
+2. The buyer backend validates the Clerk session JWT (RS256 signature, expiry,
+   and issuer) against the cached JWKS, then reads the verified Solana wallet
+   from the Clerk user record.
+3. On **Delegate**, that same browser wallet signs exactly one AP2
+   `IntentMandate` containing the price ceiling and 15-minute expiry.
+4. The broker's separate agent wallet signs the `PaymentMandate` and sends
+   USDC autonomously. There is no per-payment human approval and the human
+   wallet never pays.
+5. **My orders** queries Shopify orders whose `buyer_wallet` custom attribute
+   matches the signed-in identity wallet.
+
+The existing `POST /buy`, CLI, A2A, and MCP-style autonomous paths require no
+Clerk session and retain the configured agent payment wallet behavior.
+
+Shopify OIDC requires an email claim with `email_verified: true`. The demo Clerk
+user therefore has both a Solana Web3 wallet and a verified email; wallet-only
+users must collect/verify an email in Clerk before Shopify customer-account
+login can complete.
+
 To embed the same autonomous flow in a Shopify product-page Custom Liquid
 section, follow [`docs/DEMO-shopify-embed.md`](docs/DEMO-shopify-embed.md). The
 storefront widget calls the buyer agent over HTTPS; it never opens Shopify
@@ -134,9 +164,10 @@ checkout.
 
 This maps to PRD §5, steps 5–8 (the judging core):
 
-1. **Buyer → Shopping** A2A JSON-RPC `POST /a2a` `message/send` — sends a
-   buyer-wallet-signed `IntentMandate` as an A2A DataPart. The original
-   `POST /a2a/quote` route remains available for REST compatibility.
+1. **Buyer → Shopping** A2A JSON-RPC `POST /a2a` `message/send` — sends an
+   `IntentMandate` as an A2A DataPart. It is signed by the authenticated human
+   wallet when present, otherwise by the configured buyer agent wallet. The
+   original `POST /a2a/quote` route remains available for REST compatibility.
 2. **Shopping** queries live Shopify variants, removes out-of-stock and
    marked-up-over-budget candidates, then uses Gemini (or deterministic
    relevance) only to rank real SKUs. It calls

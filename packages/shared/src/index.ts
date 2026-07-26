@@ -66,6 +66,26 @@ export type CatalogProductsResponse = z.infer<
   typeof CatalogProductsResponseSchema
 >;
 
+/** Wallet-owned order projection used by the authenticated "my orders" view. */
+export const WalletOrderSchema = z.object({
+  shopifyOrderId: z.string(),
+  name: z.string(),
+  status: z.string(),
+  createdAt: z.string(),
+  orderRef: z.string(),
+  title: z.string(),
+  amount: z.string(),
+  buyerWallet: z.string(),
+  txSignature: z.string(),
+  explorer: z.string(),
+});
+export type WalletOrder = z.infer<typeof WalletOrderSchema>;
+
+export const WalletOrdersResponseSchema = z.object({
+  orders: z.array(WalletOrderSchema),
+});
+export type WalletOrdersResponse = z.infer<typeof WalletOrdersResponseSchema>;
+
 // ---------------------------------------------------------------------------
 // AP2 mandates — carried as A2A DataParts alongside the existing REST contracts.
 // Field names follow google-agentic-commerce/AP2's v0.1 mandate types. Relay's
@@ -87,6 +107,9 @@ export const IntentMandateSchema = z.object({
   price_ceiling: MoneySchema,
   ship_to: z.string(),
   intent_expiry: z.string(),
+  // Human identity wallet for browser-delegated intents. Omitted by the
+  // retained agent-only path, whose configured buyer wallet signs the intent.
+  signer_wallet: z.string().optional(),
   signature: z.string().min(1),
 });
 export type IntentMandate = z.infer<typeof IntentMandateSchema>;

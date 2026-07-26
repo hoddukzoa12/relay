@@ -9,6 +9,9 @@ Format: [Keep a Changelog](https://keepachangelog.com/); versioning is SemVer-is
 ### Added
 - Added an idempotent Shopify catalog seed for nine demo electronics, live
   catalog search, and published/inventory readback evidence (#25).
+- Added Clerk Sign in with Solana to the buyer console and Shopify widget,
+  cached-JWKS session verification, one-signature human AP2 delegation, and
+  signed-in-wallet Shopify order lookup (#29).
 
 ### Changed
 - Grounded sourcing in in-stock, within-budget Shopify variants, carried the

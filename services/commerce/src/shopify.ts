@@ -1,3 +1,4 @@
+import type { WalletOrder } from "@arb/shared";
 import { config } from "./config.js";
 import { ShopifyAdminClient } from "./shopify-client.js";
 
@@ -63,11 +64,29 @@ const FIND_ORDER_BY_REF = /* GraphQL */ `
   }
 `;
 
+const LIST_RELAY_ORDERS = /* GraphQL */ `
+  query ListRelayOrders($query: String!, $after: String) {
+    orders(first: 50, after: $after, query: $query, sortKey: CREATED_AT, reverse: true) {
+      nodes {
+        id
+        name
+        createdAt
+        displayFinancialStatus
+        customAttributes { key value }
+        lineItems(first: 1) { nodes { title } }
+      }
+      pageInfo { hasNextPage endCursor }
+    }
+  }
+`;
+
 interface ShopifyOrder {
   id: string;
   name: string;
   displayFinancialStatus: string;
+  createdAt?: string;
   customAttributes?: { key: string; value: string | null }[];
+  lineItems?: { nodes: { title: string }[] };
 }
 
 interface OrderCreateData {
@@ -92,6 +111,10 @@ interface FindOrderData {
 let mockCounter = 1000;
 const completedOrders = new Map<string, OrderResult>();
 const inFlightOrders = new Map<string, Promise<OrderResult>>();
+const orderInputs = new Map<
+  string,
+  { input: OrderInput; result: OrderResult; createdAt: string }
+>();
 
 export function orderTag(orderRef: string): string {
   const compactRef = orderRef.startsWith("ord_") ? orderRef.slice(4) : orderRef;
@@ -213,10 +236,83 @@ export async function createPaidOrder(input: OrderInput): Promise<OrderResult> {
   try {
     const result = await operation;
     completedOrders.set(input.orderRef, result);
+    orderInputs.set(input.orderRef, {
+      input,
+      result,
+      createdAt: new Date().toISOString(),
+    });
     return result;
   } finally {
     if (inFlightOrders.get(input.orderRef) === operation) {
       inFlightOrders.delete(input.orderRef);
     }
   }
+}
+
+function customAttribute(order: ShopifyOrder, key: string): string {
+  return (
+    order.customAttributes?.find((attribute) => attribute.key === key)?.value ??
+    ""
+  );
+}
+
+function projectOrder(order: ShopifyOrder): WalletOrder {
+  const txSignature = customAttribute(order, "tx_signature");
+  return {
+    shopifyOrderId: order.id,
+    name: order.name,
+    status: order.displayFinancialStatus,
+    createdAt: order.createdAt ?? "",
+    orderRef: customAttribute(order, "order_ref"),
+    title: order.lineItems?.nodes[0]?.title ?? "",
+    amount: customAttribute(order, "usdc_amount"),
+    buyerWallet: customAttribute(order, "buyer_wallet"),
+    txSignature,
+    explorer: txSignature
+      ? `https://explorer.solana.com/tx/${encodeURIComponent(txSignature)}?cluster=${encodeURIComponent(config.cluster)}`
+      : "",
+  };
+}
+
+/** Return only orders whose buyer_wallet attribute matches the signed-in wallet. */
+export async function listOrdersByWallet(
+  buyerWallet: string,
+): Promise<WalletOrder[]> {
+  if (config.mock) {
+    return [...orderInputs.values()]
+      .filter(({ input }) => input.buyerAddress === buyerWallet)
+      .sort((a, b) => b.createdAt.localeCompare(a.createdAt))
+      .map(({ input, result, createdAt }) => ({
+        shopifyOrderId: result.shopifyOrderId,
+        name: result.name,
+        status: "PAID",
+        createdAt,
+        orderRef: input.orderRef,
+        title: input.title,
+        amount: input.amount,
+        buyerWallet: input.buyerAddress,
+        txSignature: input.txSignature,
+        explorer: input.explorer,
+      }));
+  }
+
+  const matches: WalletOrder[] = [];
+  let after: string | null = null;
+  do {
+    const data: FindOrderData = await shopifyGraphQL<FindOrderData>(
+      LIST_RELAY_ORDERS,
+      { query: "tag:relay", after },
+    );
+    matches.push(
+      ...data.orders.nodes
+        .filter(
+          (order) => customAttribute(order, "buyer_wallet") === buyerWallet,
+        )
+        .map(projectOrder),
+    );
+    after = data.orders.pageInfo.hasNextPage
+      ? data.orders.pageInfo.endCursor
+      : null;
+  } while (after);
+  return matches;
 }

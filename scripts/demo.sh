@@ -9,6 +9,8 @@ BUDGET="${2:-25}"
 
 echo "▶ Delegating to buyer agent: '$QUERY' (budget ${BUDGET} USDC)"
 echo "  buyer = $BUYER"
+echo "  계정도 비밀번호도 없다. 지갑이 곧 계정이고, 서명이 곧 로그인."
+echo "  CLI path stays agent-only; use the web console for Clerk + one-time IntentMandate consent."
 echo
 
 RESPONSE=$(curl -sS -X POST "$BUYER/buy" \

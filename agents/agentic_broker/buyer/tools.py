@@ -12,6 +12,7 @@ from ..common.contracts import (
     INTENT_MANDATE_DATA_KEY,
     PAYMENT_MANDATE_DATA_KEY,
     CartMandate,
+    IntentMandate,
 )
 
 _LOG = logging.getLogger(__name__)
@@ -44,22 +45,36 @@ def _task_data(task: dict[str, Any]) -> dict[str, Any]:
     return data
 
 
-def request_quote(query: str, budget: float, ship_to: str) -> dict[str, Any]:
+def request_quote(
+    query: str,
+    budget: float,
+    ship_to: str,
+    delegated_intent: IntentMandate | None = None,
+) -> dict[str, Any]:
     """Ask the shopping agent (A2A) for a product + agent-native payment request.
 
     Returns the PaymentRequest dict.
     """
-    unsigned_intent = {
-        "user_cart_confirmation_required": False,
-        "natural_language_description": query,
-        "requires_refundability": False,
-        "price_ceiling": {"amount": f"{budget:.2f}", "currency": "USDC"},
-        "ship_to": ship_to,
-        "intent_expiry": (
-            datetime.now(timezone.utc) + timedelta(minutes=15)
-        ).isoformat(),
-    }
-    intent_mandate = _signed_mandate(unsigned_intent, "buyer")
+    if delegated_intent is None:
+        unsigned_intent = {
+            "user_cart_confirmation_required": False,
+            "natural_language_description": query,
+            "requires_refundability": False,
+            "price_ceiling": {"amount": f"{budget:.2f}", "currency": "USDC"},
+            "ship_to": ship_to,
+            "intent_expiry": (
+                datetime.now(timezone.utc) + timedelta(minutes=15)
+            ).isoformat(),
+        }
+        intent_mandate = _signed_mandate(unsigned_intent, "buyer")
+    else:
+        # This signature was produced once by the authenticated human wallet.
+        # PaymentMandate and the Solana transfer still use the agent wallet.
+        intent_mandate = delegated_intent.model_dump(exclude_none=True)
+        _LOG.info(
+            "[ap2] using delegated IntentMandate signer=human publicKey=%s",
+            delegated_intent.signer_wallet,
+        )
     task = service_clients.a2a_message_send(
         {INTENT_MANDATE_DATA_KEY: intent_mandate}
     )

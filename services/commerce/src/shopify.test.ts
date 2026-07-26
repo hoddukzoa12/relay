@@ -9,7 +9,12 @@ import {
   ShopifyAdminClient,
   ShopifyTokenProvider,
 } from "./shopify-client.js";
-import { createPaidOrder, orderTag, type OrderInput } from "./shopify.js";
+import {
+  createPaidOrder,
+  listOrdersByWallet,
+  orderTag,
+  type OrderInput,
+} from "./shopify.js";
 
 const input = (orderRef: string): OrderInput => ({
   orderRef,
@@ -38,6 +43,26 @@ test("mock order creation coalesces concurrent replays", async () => {
   ]);
 
   assert.deepEqual(second, first);
+});
+
+test("wallet order lookup returns only the signed-in wallet's orders", async () => {
+  const wallet = `wallet-${crypto.randomUUID()}`;
+  const ownOrder = {
+    ...input(`order-${crypto.randomUUID()}`),
+    buyerAddress: wallet,
+  };
+  const otherOrder = {
+    ...input(`order-${crypto.randomUUID()}`),
+    buyerAddress: `wallet-${crypto.randomUUID()}`,
+  };
+  await createPaidOrder(ownOrder);
+  await createPaidOrder(otherOrder);
+
+  const orders = await listOrdersByWallet(wallet);
+
+  assert.equal(orders.length, 1);
+  assert.equal(orders[0]?.orderRef, ownOrder.orderRef);
+  assert.equal(orders[0]?.buyerWallet, wallet);
 });
 
 test("mock catalog is deterministic and query-ranked", async () => {

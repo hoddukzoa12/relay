@@ -3,7 +3,7 @@ import cors from "cors";
 import { z } from "zod";
 import { config } from "./config.js";
 import { listProducts } from "./catalog.js";
-import { createPaidOrder } from "./shopify.js";
+import { createPaidOrder, listOrdersByWallet } from "./shopify.js";
 
 const app = express();
 app.use(cors());
@@ -49,6 +49,18 @@ app.post(
   asyncH(async (req, res) => {
     const input = OrderSchema.parse(req.body);
     res.json(await createPaidOrder(input));
+  }),
+);
+
+const WalletOrdersQuerySchema = z.object({
+  buyerAddress: z.string().trim().min(32).max(64),
+});
+
+app.get(
+  "/orders",
+  asyncH(async (req, res) => {
+    const input = WalletOrdersQuerySchema.parse(req.query);
+    res.json({ orders: await listOrdersByWallet(input.buyerAddress) });
   }),
 );
 

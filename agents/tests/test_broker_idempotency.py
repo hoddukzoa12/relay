@@ -161,6 +161,39 @@ class BrokerIdempotencyTest(unittest.TestCase):
         self.assertEqual(confirmation.shopifyOrderId, "shopify-order-1")
         verify_payment.assert_called_once()
 
+    def test_human_identity_wallet_owns_order_but_agent_pays(self) -> None:
+        quote = self._quote()
+        settlement = SettlementRequest(
+            orderRef=quote.orderRef,
+            reference=quote.reference,
+            txSignature="tx_signature",
+        )
+        verification = {
+            "status": "paid",
+            "txSignature": "tx_signature",
+            "explorer": "https://explorer.test/tx_signature",
+            "amount": "1.15",
+            "reason": None,
+        }
+        with (
+            patch.object(broker.tools, "verify_payment", return_value=verification),
+            patch.object(
+                broker.tools,
+                "record_order",
+                return_value={"shopifyOrderId": "shopify-order-1"},
+            ) as record_order,
+            patch.object(broker.service_clients, "payments_wallets") as wallets,
+        ):
+            confirmation = broker.handle_settle(
+                settlement, identity_wallet="human-wallet"
+            )
+
+        self.assertEqual(confirmation.status, "paid")
+        self.assertEqual(
+            record_order.call_args.kwargs["buyer_address"], "human-wallet"
+        )
+        wallets.assert_not_called()
+
     def test_order_refs_are_uuid_based_and_unique(self) -> None:
         first = self._quote().orderRef
         second = self._quote().orderRef
