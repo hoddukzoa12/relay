@@ -14,6 +14,9 @@ Format: [Keep a Changelog](https://keepachangelog.com/); versioning is SemVer-is
 - Grounded sourcing in in-stock, within-budget Shopify variants, carried the
   real SKU/variant through CartMandate, and linked Shopify orders to the real
   variant while preserving the broker resale price (#25).
+- Replaced expiring pasted Shopify Admin tokens with a cached client credentials
+  provider shared by the commerce service and catalog seeder, while retaining
+  static-token compatibility for legacy stores (#28).
 
 ### Fixed
 - Made payment references single-use with pending/paying/paid transitions,

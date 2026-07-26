@@ -50,7 +50,7 @@ Next:
       commerce  → SHOPIFY_* secrets
       shopping  → PAYMENTS_SERVICE_URL, COMMERCE_SERVICE_URL (payments/commerce URLs)
       buyer     → PAYMENTS_SERVICE_URL, SHOPPING_AGENT_URL
-  * Mount wallet keys + GOOGLE_API_KEY + SHOPIFY token from Secret Manager,
+  * Mount wallet keys + GOOGLE_API_KEY + Shopify client credentials from Secret Manager,
     NOT plain --set-env-vars. See infra/cloudrun/README.md.
   * The buyer service URL is your public demo link.
 NOTE
