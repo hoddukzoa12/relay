@@ -109,6 +109,7 @@ interface FindOrderData {
 }
 
 let mockCounter = 1000;
+const MARK_PAID_RETRY_DELAYS_MS = [1_000, 2_000, 4_000, 8_000, 16_000];
 const completedOrders = new Map<string, OrderResult>();
 const inFlightOrders = new Map<string, Promise<OrderResult>>();
 const orderInputs = new Map<
@@ -191,22 +192,44 @@ async function createOrder(input: OrderInput): Promise<ShopifyOrder> {
 async function markOrderPaid(order: ShopifyOrder): Promise<void> {
   if (order.displayFinancialStatus === "PAID") return;
 
-  const paid = await shopifyGraphQL<OrderMarkAsPaidData>(ORDER_MARK_AS_PAID, {
-    input: { id: order.id },
-  });
-  if (paid.orderMarkAsPaid.userErrors.length) {
-    throw new Error(`orderMarkAsPaid failed: ${JSON.stringify(paid.orderMarkAsPaid.userErrors)}`);
-  }
-  if (
-    !paid.orderMarkAsPaid.order ||
-    paid.orderMarkAsPaid.order.displayFinancialStatus !== "PAID"
-  ) {
-    throw new Error(
-      `orderMarkAsPaid returned unexpected status: ${
-        paid.orderMarkAsPaid.order?.displayFinancialStatus ?? "missing order"
-      }`,
+  for (let attempt = 0; ; attempt += 1) {
+    const paid = await shopifyGraphQL<OrderMarkAsPaidData>(ORDER_MARK_AS_PAID, {
+      input: { id: order.id },
+    });
+    const errors = paid.orderMarkAsPaid.userErrors;
+    if (errors.length === 0) {
+      if (
+        !paid.orderMarkAsPaid.order ||
+        paid.orderMarkAsPaid.order.displayFinancialStatus !== "PAID"
+      ) {
+        throw new Error(
+          `orderMarkAsPaid returned unexpected status: ${
+            paid.orderMarkAsPaid.order?.displayFinancialStatus ?? "missing order"
+          }`,
+        );
+      }
+      return;
+    }
+
+    const delayMs = MARK_PAID_RETRY_DELAYS_MS[attempt];
+    if (!isTemporaryOrderMutationError(errors) || delayMs === undefined) {
+      throw new Error(`orderMarkAsPaid failed: ${JSON.stringify(errors)}`);
+    }
+    console.warn(
+      `[commerce] Shopify order ${order.id} is temporarily unavailable; retrying mark-paid in ${delayMs}ms`,
     );
+    await new Promise((resolve) => setTimeout(resolve, delayMs));
   }
+}
+
+export function isTemporaryOrderMutationError(
+  errors: { field: string[] | null; message: string }[],
+): boolean {
+  return errors.some(
+    (error) =>
+      error.field?.includes("id") === true &&
+      error.message.toLowerCase().includes("temporarily unavailable"),
+  );
 }
 
 async function createPaidOrderOnce(input: OrderInput): Promise<OrderResult> {

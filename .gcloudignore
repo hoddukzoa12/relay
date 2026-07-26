@@ -1,0 +1,13 @@
+.gcloudignore
+.git
+.gitignore
+.env
+.env.*
+!.env.example
+wallets/
+**/node_modules/
+**/.venv/
+**/__pycache__/
+**/.pytest_cache/
+*.log
+*.tsbuildinfo

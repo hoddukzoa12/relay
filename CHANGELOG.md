@@ -7,6 +7,9 @@ Format: [Keep a Changelog](https://keepachangelog.com/); versioning is SemVer-is
 ## [Unreleased]
 
 ### Added
+- Added the live four-service Cloud Run deployment in `us-central1`, with a
+  public buyer console, IAM-authenticated backend calls, Secret Manager
+  provisioning within the free allowance, and scale-to-zero cost controls (#2).
 - Added an idempotent Shopify catalog seed for nine demo electronics, live
   catalog search, and published/inventory readback evidence (#25).
 - Added Clerk Sign in with Solana to the buyer console and Shopify widget,
@@ -22,6 +25,8 @@ Format: [Keep a Changelog](https://keepachangelog.com/); versioning is SemVer-is
   static-token compatibility for legacy stores (#28).
 
 ### Fixed
+- Retried Shopify's transient post-creation `orderMarkAsPaid` availability
+  window so the deployed buyer flow returns one clean paid confirmation (#2).
 - Made payment references single-use with pending/paying/paid transitions,
   reconciled uncertain Solana confirmations without resending, and made broker
   settlement plus Shopify order creation idempotent by `orderRef` (#20).

@@ -6,18 +6,72 @@ threadpool — so we avoid async plumbing entirely.
 """
 from __future__ import annotations
 
+from functools import lru_cache
+import logging
+from threading import Lock
 from typing import Any, Optional
+from urllib.parse import urlsplit
 from uuid import uuid4
 
 import httpx
+import jwt
+from google.auth.credentials import Credentials
+from google.auth.transport.requests import Request as GoogleAuthRequest
+from google.oauth2 import id_token
 
 from .config import settings
 
 _TIMEOUT = httpx.Timeout(60.0)
+_GOOGLE_AUTH_REQUEST = GoogleAuthRequest()
+_CREDENTIAL_LOCK = Lock()
+_LOG = logging.getLogger(__name__)
+
+
+@lru_cache(maxsize=16)
+def _id_token_credentials(audience: str) -> Credentials:
+    """Resolve application-default ID-token credentials for one Cloud Run peer."""
+    return id_token.fetch_id_token_credentials(
+        audience,
+        request=_GOOGLE_AUTH_REQUEST,
+    )
+
+
+def _cloud_run_auth_headers(url: str) -> dict[str, str]:
+    """Authenticate run.app service-to-service calls without affecting local dev."""
+    parsed = urlsplit(url)
+    hostname = parsed.hostname or ""
+    if parsed.scheme != "https" or not hostname.endswith(".run.app"):
+        return {}
+
+    audience = f"{parsed.scheme}://{parsed.netloc}"
+    credentials = _id_token_credentials(audience)
+    with _CREDENTIAL_LOCK:
+        if not credentials.valid:
+            credentials.refresh(_GOOGLE_AUTH_REQUEST)
+        token = credentials.token
+    if not token:
+        raise RuntimeError(f"Unable to obtain a Cloud Run ID token for {audience}")
+    claims = jwt.decode(
+        token,
+        options={"verify_signature": False, "verify_aud": False},
+    )
+    _LOG.info(
+        "[cloud-run-auth] issuer=%s audience=%s email=%s subject=%s",
+        claims.get("iss", ""),
+        claims.get("aud", ""),
+        claims.get("email", ""),
+        claims.get("sub", ""),
+    )
+    return {"Authorization": f"Bearer {token}"}
 
 
 def _post(url: str, payload: dict[str, Any]) -> dict[str, Any]:
-    resp = httpx.post(url, json=payload, timeout=_TIMEOUT)
+    resp = httpx.post(
+        url,
+        json=payload,
+        headers=_cloud_run_auth_headers(url),
+        timeout=_TIMEOUT,
+    )
     resp.raise_for_status()
     return resp.json()
 
@@ -25,7 +79,12 @@ def _post(url: str, payload: dict[str, Any]) -> dict[str, Any]:
 def _get(
     url: str, params: Optional[dict[str, Any]] = None
 ) -> dict[str, Any]:
-    resp = httpx.get(url, params=params, timeout=_TIMEOUT)
+    resp = httpx.get(
+        url,
+        params=params,
+        headers=_cloud_run_auth_headers(url),
+        timeout=_TIMEOUT,
+    )
     resp.raise_for_status()
     return resp.json()
 

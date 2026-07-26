@@ -195,15 +195,39 @@ click. That's what makes it *autonomous* (PRD §7).
 
 ## Deploy (Cloud Run)
 
+Live deployment (`web3research`, `us-central1`):
+
+| Service | URL | Access |
+|---|---|---|
+| payments | https://payments-763kssfe2q-uc.a.run.app | IAM only |
+| commerce | https://commerce-763kssfe2q-uc.a.run.app | IAM only |
+| shopping | https://shopping-763kssfe2q-uc.a.run.app | IAM only |
+| buyer | **https://buyer-763kssfe2q-uc.a.run.app** | public demo |
+
+To reproduce from the prepared `.env` and local throwaway wallets:
+
 ```bash
-export PROJECT_ID=your-gcp-project
+make setup
+export PROJECT_ID=web3research
+./scripts/provision-cloudrun-secrets.sh
 ./scripts/deploy-cloudrun.sh
+
+BUYER_AGENT_URL=https://buyer-763kssfe2q-uc.a.run.app \
+  ./scripts/demo.sh "wireless earbuds" 5
 ```
 
-Secrets (wallet keys, Gemini key, Shopify token) go through Secret Manager, and
-service URLs are wired together after the first deploy — see
-[`infra/cloudrun/README.md`](infra/cloudrun/README.md). The **buyer** service URL
-is your public demo link.
+The deploy is hard-pinned to `us-central1`, uses scale-to-zero (no minimum
+instances), locks the three backend services behind IAM, and removes imported
+image copies from Artifact Registry to avoid ongoing storage cost. Wallet keys,
+Gemini, Shopify client credentials, and the Clerk secret are all supplied
+through Secret Manager—not plain environment flags. See
+[`infra/cloudrun/README.md`](infra/cloudrun/README.md) for the exact secret
+layout, access checks, and teardown-free verification commands.
+
+Latest deployed proof (2026-07-27): **paid** 3.45 devnet USDC for real Shopify
+variant `gid://shopify/ProductVariant/59695017197854`, recorded as paid order
+`gid://shopify/Order/8709779915038`.
+[View the Solana transaction](https://explorer.solana.com/tx/5Agbz4X5RByc2jMWzd9mH3WuZQkFnqy736UFthMcj2uTrGpaUz6StfaU7sjwx6kfrGJk5cM9rjn9VbvCTyd8AsRy?cluster=devnet).
 
 ## Judging-criteria map (PRD §8)
 
@@ -214,8 +238,10 @@ is your public demo link.
 | ③ 3-min demo (real payment, end-to-end) | `scripts/demo.sh` → explorer tx |
 | ④ Innovation / AI use / infra | headless payment endpoint · Gemini sourcing · Solana Pay + Cloud Run |
 
-**Definition of Done (PRD §12):** a real devnet USDC tx visible on the explorer,
-zero human clicks at payment, a `paid` Shopify order, a live URL, ≤3-min repro.
+**Definition of Done (PRD §12):** complete — a real devnet USDC tx is visible
+on the explorer, payment required zero human clicks, Shopify recorded a paid
+order, the buyer has a live HTTPS URL, and the scripted repro completes in
+under three minutes.
 
 ## Progressive setup (works before everything is ready)
 

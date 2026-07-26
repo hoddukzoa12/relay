@@ -1,60 +1,147 @@
 # Cloud Run deployment
 
-Four services, one region (Seoul = `us-central1`):
+Relay is live in `web3research` on `us-central1` (Iowa). This region is
+intentional: the Cloud Run free tier is priced from `us-central1`; Seoul
+(`asia-northeast3`) is not covered.
 
-| Service   | Port | Public? | Notes |
-|-----------|------|---------|-------|
-| payments  | 8081 | internal (or public for debug) | holds wallet keys — treat as sensitive |
-| commerce  | 8082 | internal | holds Shopify client credentials |
-| shopping  | 8091 | internal | broker agent |
-| buyer     | 8090 | **public** | this URL is your demo link |
+## Live services
 
-## Secrets (do NOT use `--set-env-vars` for these)
+| Service | URL | Access | Runtime identity |
+|---|---|---|---|
+| payments | https://payments-763kssfe2q-uc.a.run.app | IAM only | `relay-payments@web3research.iam.gserviceaccount.com` |
+| commerce | https://commerce-763kssfe2q-uc.a.run.app | IAM only | `relay-commerce@web3research.iam.gserviceaccount.com` |
+| shopping | https://shopping-763kssfe2q-uc.a.run.app | IAM only | `relay-shopping@web3research.iam.gserviceaccount.com` |
+| buyer | **https://buyer-763kssfe2q-uc.a.run.app** | public | `relay-buyer@web3research.iam.gserviceaccount.com` |
 
-Store in Secret Manager and mount:
+The three private services keep `ingress=all` because peer calls use their
+`run.app` URLs, but Cloud Run rejects callers without `roles/run.invoker`.
+The Python peer client obtains audience-bound Google ID tokens from the Cloud
+Run metadata server. Only buyer has an `allUsers` invoker binding.
 
-```bash
-# wallet keypairs (base58 secret is easiest for Cloud Run)
-gcloud secrets create merchant-wallet --data-file=- <<< "$MERCHANT_BASE58"
-gcloud secrets create buyer-wallet    --data-file=- <<< "$BUYER_BASE58"
-gcloud secrets create gemini-key      --data-file=- <<< "$GOOGLE_API_KEY"
-gcloud secrets create shopify-client-id     --data-file=- <<< "$SHOPIFY_CLIENT_ID"
-gcloud secrets create shopify-client-secret --data-file=- <<< "$SHOPIFY_CLIENT_SECRET"
+Every service uses 1 vCPU, 512 MiB, concurrency 20, and a maximum of two
+instances. There is deliberately no `--min-instances` setting, so all four
+services scale to zero.
 
-# then, per service:
-gcloud run services update payments --region us-central1 \
-  --set-secrets MERCHANT_WALLET_SECRET=merchant-wallet:latest,BUYER_WALLET_SECRET=buyer-wallet:latest
-gcloud run services update shopping --region us-central1 \
-  --set-secrets GOOGLE_API_KEY=gemini-key:latest
-gcloud run services update buyer --region us-central1 \
-  --set-secrets GOOGLE_API_KEY=gemini-key:latest
-gcloud run services update commerce --region us-central1 \
-  --set-secrets SHOPIFY_CLIENT_ID=shopify-client-id:latest,SHOPIFY_CLIENT_SECRET=shopify-client-secret:latest \
-  --set-env-vars COMMERCE_MOCK=false,SHOPIFY_STORE_DOMAIN=your-store.myshopify.com
-```
+## Exact deploy
 
-Legacy stores may instead mount an existing static Admin API token as
-`SHOPIFY_ADMIN_ACCESS_TOKEN`; when both auth paths are configured, the static
-token takes precedence.
+Prerequisites:
 
-> On Cloud Run, supply wallets via `*_WALLET_SECRET` (base58), not the
-> `*_KEYPAIR_PATH` files — there is no repo `./wallets` dir in the container.
-> Convert an id.json to base58 with any bs58 tool, or:
-> `python -c "import json,base58,sys; print(base58.b58encode(bytes(json.load(open(sys.argv[1])))).decode())" wallets/buyer.json`
+- `gcloud` authenticated to an account that can administer project
+  `web3research`;
+- billing enabled and the Cloud Run, Cloud Build, Artifact Registry, IAM, and
+  Secret Manager APIs enabled;
+- `.env` populated from `.env.example`;
+- `wallets/merchant.json` and `wallets/buyer.json` present locally;
+- Node 20+, pnpm, and Python 3.11+.
 
-## Wiring URLs
-
-After the first deploy, set each service's outbound URLs to the deployed peers:
+Run:
 
 ```bash
-PAY=$(gcloud run services describe payments --region us-central1 --format 'value(status.url)')
-COM=$(gcloud run services describe commerce --region us-central1 --format 'value(status.url)')
-SHOP=$(gcloud run services describe shopping --region us-central1 --format 'value(status.url)')
+make setup
+export PROJECT_ID=web3research
 
-gcloud run services update shopping --region us-central1 \
-  --set-env-vars "PAYMENTS_SERVICE_URL=$PAY,COMMERCE_SERVICE_URL=$COM"
-gcloud run services update buyer --region us-central1 \
-  --set-env-vars "PAYMENTS_SERVICE_URL=$PAY,SHOPPING_AGENT_URL=$SHOP"
+# Creates secrets only when absent. A repeat never adds billable versions.
+./scripts/provision-cloudrun-secrets.sh
+
+# Builds three images, deploys four services, wires URLs/IAM, and removes the
+# Artifact Registry image copies after Cloud Run imports them.
+./scripts/deploy-cloudrun.sh
 ```
 
-The **buyer** service URL is the live demo link (judging bonus, PRD §8 ④).
+`deploy-cloudrun.sh` refuses any region except `us-central1`. It uses the
+checked-in [`cloudbuild.yaml`](cloudbuild.yaml), starts buyer with
+`agentic_broker.buyer.server`, and starts shopping with the image default. It
+sets all required non-secret values on all services and then wires:
+
+- shopping → `PAYMENTS_SERVICE_URL` + `COMMERCE_SERVICE_URL`;
+- buyer → `PAYMENTS_SERVICE_URL` + `COMMERCE_SERVICE_URL` +
+  `SHOPPING_AGENT_URL`;
+- buyer CORS → `https://solanagcp.myshopify.com` + the buyer service URL.
+
+The deployment deletes the three Artifact Registry image packages after Cloud
+Run imports the revisions. This avoids ongoing image-storage cost; a repeat
+simply rebuilds them.
+
+## Secret Manager layout
+
+Never pass secret values through `--set-env-vars`. The provisioner creates five
+active versions, below Secret Manager's account-wide six-version free
+allowance:
+
+| Secret | Mounted as | Service |
+|---|---|---|
+| `relay-wallets` | `/secrets/wallets.json` | payments |
+| `relay-google-api-key` | `GOOGLE_API_KEY` | shopping, buyer |
+| `relay-shopify-client-id` | `SHOPIFY_CLIENT_ID` | commerce |
+| `relay-shopify-client-secret` | `SHOPIFY_CLIENT_SECRET` | commerce |
+| `relay-clerk-secret-key` | `CLERK_SECRET_KEY` | buyer |
+
+`relay-wallets` is JSON with `MERCHANT_WALLET_SECRET` and
+`BUYER_WALLET_SECRET`, both base58-encoded 64-byte Solana keypairs. Bundling the
+two wallet values keeps the deployment within the free allowance; payments
+loads the same two runtime names through `WALLET_SECRET_BUNDLE_PATH`. The local
+wallet JSON files and `.env` are excluded by both `.gitignore` and
+`.gcloudignore`.
+
+## Verify
+
+Health and access boundaries:
+
+```bash
+export PROJECT_ID=web3research
+export REGION=us-central1
+TOKEN="$(gcloud auth print-identity-token)"
+
+curl -H "Authorization: Bearer $TOKEN" \
+  https://payments-763kssfe2q-uc.a.run.app/health
+curl -H "Authorization: Bearer $TOKEN" \
+  https://commerce-763kssfe2q-uc.a.run.app/health
+curl -H "Authorization: Bearer $TOKEN" \
+  https://shopping-763kssfe2q-uc.a.run.app/health
+curl https://buyer-763kssfe2q-uc.a.run.app/health
+curl https://buyer-763kssfe2q-uc.a.run.app/
+
+# Each private URL returns 403 when the Authorization header is omitted.
+```
+
+Region and scale-to-zero:
+
+```bash
+gcloud run services list \
+  --project "$PROJECT_ID" \
+  --region "$REGION" \
+  --format='table(metadata.name,status.url)'
+
+for service in payments commerce shopping buyer; do
+  gcloud run services describe "$service" \
+    --project "$PROJECT_ID" \
+    --region "$REGION" \
+    --format='yaml(metadata.name,spec.template.metadata.annotations)'
+done
+# autoscaling.knative.dev/minScale is absent on every service.
+```
+
+Live money path:
+
+```bash
+BUYER_AGENT_URL=https://buyer-763kssfe2q-uc.a.run.app \
+  ./scripts/demo.sh "wireless earbuds" 5
+```
+
+Verified on 2026-07-27:
+
+- result: `paid`;
+- real Shopify variant:
+  `gid://shopify/ProductVariant/59695017197854`
+  (`RELAY-AUDIO-EARBUD-MINI`);
+- amount: 3.45 devnet USDC;
+- transaction:
+  https://explorer.solana.com/tx/5Agbz4X5RByc2jMWzd9mH3WuZQkFnqy736UFthMcj2uTrGpaUz6StfaU7sjwx6kfrGJk5cM9rjn9VbvCTyd8AsRy?cluster=devnet;
+- paid Shopify order: `gid://shopify/Order/8709779915038`;
+- order ref: `ord_3a78e2a419fa44d2beb84884a251cec3`.
+
+Finish with:
+
+```bash
+pnpm -r typecheck
+```
