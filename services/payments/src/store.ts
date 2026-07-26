@@ -15,6 +15,9 @@ export interface StoredRequest {
   title: string;
   createdAt: number;
   expiresAt: number; // epoch ms
+  status: "pending" | "paying" | "paid";
+  submittedTxSignature: string | null;
+  paidTxSignature: string | null;
 }
 
 const requests = new Map<string, StoredRequest>();
@@ -25,6 +28,58 @@ export const store = {
   },
   get(reference: string): StoredRequest | undefined {
     return requests.get(reference);
+  },
+  /**
+   * Synchronous Map mutation is the compare-and-set boundary for this
+   * process. Only one caller can move a reference from pending to paying.
+   */
+  beginPayment(reference: string):
+    | { state: "started"; request: StoredRequest }
+    | { state: "paying"; request: StoredRequest }
+    | { state: "paid"; request: StoredRequest } {
+    const request = requests.get(reference);
+    if (!request) {
+      throw new Error("Unknown payment reference");
+    }
+    if (request.status === "pending") {
+      request.status = "paying";
+      return { state: "started", request };
+    }
+    return { state: request.status, request };
+  },
+  recordSubmitted(reference: string, signature: string): void {
+    const request = requests.get(reference);
+    if (!request || request.status !== "paying") {
+      throw new Error(`Cannot record submitted transaction for ${reference}`);
+    }
+    if (
+      request.submittedTxSignature !== null &&
+      request.submittedTxSignature !== signature
+    ) {
+      throw new Error(`Payment reference ${reference} already has a submitted transaction`);
+    }
+    request.submittedTxSignature = signature;
+  },
+  markPaid(reference: string, signature: string): void {
+    const request = requests.get(reference);
+    if (!request) {
+      throw new Error("Unknown payment reference");
+    }
+    if (request.paidTxSignature !== null && request.paidTxSignature !== signature) {
+      throw new Error(`Payment reference ${reference} is already paid by another transaction`);
+    }
+    request.status = "paid";
+    request.submittedTxSignature ??= signature;
+    request.paidTxSignature = signature;
+  },
+  resetUnsubmitted(reference: string): void {
+    const request = requests.get(reference);
+    if (
+      request?.status === "paying" &&
+      request.submittedTxSignature === null
+    ) {
+      request.status = "pending";
+    }
   },
   all(): StoredRequest[] {
     return [...requests.values()];

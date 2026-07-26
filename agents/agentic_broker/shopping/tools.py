@@ -46,8 +46,9 @@ def issue_payment_request(
 def verify_payment(reference: str) -> dict[str, Any]:
     """Verify the on-chain USDC payment for `reference`.
 
-    Returns {"status", "txSignature", "explorer", "amount"} — status is one of
-    pending | paid | expired | invalid.
+    Returns {"status", "txSignature", "explorer", "amount", "reason"} —
+    status is one of pending | paid | expired | invalid, and reason is a
+    machine-readable failure reason or None.
     """
     return service_clients.payments_verify(reference)
 

@@ -12,9 +12,11 @@ import {
   ValidateTransferError,
 } from "@solana/pay";
 import BigNumber from "bignumber.js";
+import bs58 from "bs58";
 import {
   explorerTxUrl,
   type PaymentRequest,
+  type VerificationFailureReasonT,
   type VerificationResult,
 } from "@arb/shared";
 import { config } from "./config.js";
@@ -36,6 +38,95 @@ const VERIFY_TIMEOUT_MS = 20_000;
 const VERIFY_POLL_MS = 1_000;
 
 const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
+
+export interface PayResult {
+  status: "pending" | "paid";
+  txSignature: string;
+  explorer: string;
+  reason: "broadcast_uncertain" | "confirmation_uncertain" | null;
+}
+
+type ReconciliationResult = "failed" | "paid" | "pending";
+const inFlightPayments = new Map<string, Promise<PayResult>>();
+
+function paidResult(signature: string): PayResult {
+  return {
+    status: "paid",
+    txSignature: signature,
+    explorer: explorerTxUrl(signature, CLUSTER),
+    reason: null,
+  };
+}
+
+function pendingResult(
+  signature: string,
+  reason: Exclude<PayResult["reason"], null>,
+): PayResult {
+  return {
+    status: "pending",
+    txSignature: signature,
+    explorer: explorerTxUrl(signature, CLUSTER),
+    reason,
+  };
+}
+
+/**
+ * Confirmation errors are ambiguous: the RPC can time out after the transfer
+ * lands. Reconcile both the deterministic transaction signature and the
+ * Solana Pay reference before returning, and never reopen the reference here.
+ */
+async function reconcileSubmittedPayment(
+  stored: StoredRequest,
+  signature: string,
+): Promise<ReconciliationResult> {
+  const referencePk = new PublicKey(stored.reference);
+  const [statusResult, referenceResult] = await Promise.allSettled([
+    withFailover((c) =>
+      c.getSignatureStatuses([signature], { searchTransactionHistory: true }),
+    ),
+    withFailover(
+      (c) => findReference(c, referencePk, { finality: "confirmed" }),
+      (err) => !(err instanceof FindReferenceError),
+    ).catch((err: unknown) => {
+      if (err instanceof FindReferenceError) return null;
+      throw err;
+    }),
+  ]);
+
+  const signatureStatus =
+    statusResult.status === "fulfilled" ? statusResult.value.value[0] : null;
+  const referenceInfo =
+    referenceResult.status === "fulfilled" ? referenceResult.value : null;
+
+  if (statusResult.status === "rejected") {
+    console.warn(
+      `[pay] signature-status reconciliation failed for ${signature}:`,
+      String(statusResult.reason),
+    );
+  }
+  if (referenceResult.status === "rejected") {
+    console.warn(
+      `[pay] reference reconciliation failed for ${stored.reference}:`,
+      String(referenceResult.reason),
+    );
+  }
+
+  if (
+    signatureStatus?.err ||
+    (referenceInfo?.signature === signature && referenceInfo.err)
+  ) {
+    return "failed";
+  }
+  if (
+    signatureStatus?.confirmationStatus === "confirmed" ||
+    signatureStatus?.confirmationStatus === "finalized" ||
+    referenceInfo?.signature === signature
+  ) {
+    store.markPaid(stored.reference, signature);
+    return "paid";
+  }
+  return "pending";
+}
 
 // ---------------------------------------------------------------------------
 // Step 3 — the shopping agent issues an agent-native payment request.
@@ -63,6 +154,9 @@ export function createPaymentRequest(input: CreateRequestInput): PaymentRequest 
     title: input.title,
     createdAt: now,
     expiresAt,
+    status: "pending",
+    submittedTxSignature: null,
+    paidTxSignature: null,
   };
   store.put(stored);
 
@@ -98,15 +192,112 @@ export interface PayInput {
   reference: string;
 }
 
-export async function pay(input: PayInput): Promise<{ txSignature: string; explorer: string }> {
+async function submitPayment(
+  stored: StoredRequest,
+  input: PayInput,
+): Promise<PayResult> {
   const recipient = new PublicKey(input.payTo);
   const referencePk = new PublicKey(input.reference);
+  let tx: Transaction;
+  let latestBlockhash: Awaited<ReturnType<typeof connection.getLatestBlockhash>>;
+  try {
+    await assertUsdcDecimals();
+
+    // Ensure both sides have a USDC token account (buyer funds any creation).
+    const buyerAta = await ensureAta(buyer, buyer.publicKey);
+    const recipientAta = await ensureAta(buyer, recipient);
+
+    const ix = createTransferCheckedInstruction(
+      buyerAta.address,
+      usdcMint,
+      recipientAta.address,
+      buyer.publicKey,
+      toBaseUnits(input.amount),
+      usdcDecimals,
+    );
+    // The Solana Pay "reference": a non-signer, read-only key that tags the tx so
+    // the merchant can locate it on-chain without trusting the client.
+    ix.keys.push({ pubkey: referencePk, isSigner: false, isWritable: false });
+
+    tx = new Transaction().add(ix);
+    tx.feePayer = buyer.publicKey;
+    latestBlockhash = await connection.getLatestBlockhash("confirmed");
+    tx.recentBlockhash = latestBlockhash.blockhash;
+    tx.sign(buyer);
+  } catch (err) {
+    // No transfer has been signed, so this reference is safe to try again.
+    store.resetUnsubmitted(input.reference);
+    throw err;
+  }
+
+  if (!tx.signature) {
+    store.resetUnsubmitted(input.reference);
+    throw new Error("Signed transaction did not contain a signature");
+  }
+  const signature = bs58.encode(tx.signature);
+  store.recordSubmitted(input.reference, signature);
+
+  try {
+    const submittedSignature = await connection.sendRawTransaction(tx.serialize(), {
+      preflightCommitment: "confirmed",
+      maxRetries: 5,
+    });
+    if (submittedSignature !== signature) {
+      console.warn(
+        `[pay] RPC returned signature ${submittedSignature}, expected ${signature}`,
+      );
+    }
+  } catch (err) {
+    const reconciled = await reconcileSubmittedPayment(stored, signature);
+    if (reconciled === "paid") return paidResult(signature);
+    if (reconciled === "failed") {
+      throw new Error(
+        `USDC transfer ${signature} failed; issue a new payment reference`,
+      );
+    }
+    console.warn(
+      `[pay] broadcast result is uncertain for ${signature}; reference remains locked:`,
+      String(err),
+    );
+    return pendingResult(signature, "broadcast_uncertain");
+  }
+
+  let confirmation;
+  try {
+    confirmation = await connection.confirmTransaction(
+      { signature, ...latestBlockhash },
+      "confirmed",
+    );
+  } catch (err) {
+    const reconciled = await reconcileSubmittedPayment(stored, signature);
+    if (reconciled === "paid") return paidResult(signature);
+    if (reconciled === "failed") {
+      throw new Error(
+        `USDC transfer ${signature} failed; issue a new payment reference`,
+      );
+    }
+    console.warn(
+      `[pay] confirmation is uncertain for ${signature}; reference remains locked:`,
+      String(err),
+    );
+    return pendingResult(signature, "confirmation_uncertain");
+  }
+  if (confirmation.value.err) {
+    throw new Error(
+      `USDC transfer ${signature} failed: ${JSON.stringify(confirmation.value.err)}; ` +
+        "issue a new payment reference",
+    );
+  }
+
+  store.markPaid(input.reference, signature);
+  return paidResult(signature);
+}
+
+export async function pay(input: PayInput): Promise<PayResult> {
+  const recipient = new PublicKey(input.payTo);
   const stored = store.get(input.reference);
   if (!stored) {
     throw new Error("Unknown payment reference");
-  }
-  if (Date.now() > stored.expiresAt) {
-    throw new Error("Payment request has expired");
   }
   if (
     stored.recipient !== recipient.toBase58() ||
@@ -115,52 +306,74 @@ export async function pay(input: PayInput): Promise<{ txSignature: string; explo
     throw new Error("Payment does not match the issued request");
   }
 
-  await assertUsdcDecimals();
-
-  // Ensure both sides have a USDC token account (buyer funds any creation).
-  const buyerAta = await ensureAta(buyer, buyer.publicKey);
-  const recipientAta = await ensureAta(buyer, recipient);
-
-  const ix = createTransferCheckedInstruction(
-    buyerAta.address,
-    usdcMint,
-    recipientAta.address,
-    buyer.publicKey,
-    toBaseUnits(input.amount),
-    usdcDecimals,
-  );
-  // The Solana Pay "reference": a non-signer, read-only key that tags the tx so
-  // the merchant can locate it on-chain without trusting the client.
-  ix.keys.push({ pubkey: referencePk, isSigner: false, isWritable: false });
-
-  const tx = new Transaction().add(ix);
-  tx.feePayer = buyer.publicKey;
-  const latestBlockhash = await connection.getLatestBlockhash("confirmed");
-  tx.recentBlockhash = latestBlockhash.blockhash;
-  tx.sign(buyer);
-
-  const signature = await connection.sendRawTransaction(tx.serialize(), {
-    preflightCommitment: "confirmed",
-    maxRetries: 5,
-  });
-  const confirmation = await connection.confirmTransaction(
-    { signature, ...latestBlockhash },
-    "confirmed",
-  );
-  if (confirmation.value.err) {
-    throw new Error(`USDC transfer failed: ${JSON.stringify(confirmation.value.err)}`);
+  if (stored.status === "paid") {
+    if (!stored.paidTxSignature) {
+      throw new Error(`Paid payment reference ${input.reference} has no stored signature`);
+    }
+    return paidResult(stored.paidTxSignature);
+  }
+  if (stored.status === "pending" && Date.now() > stored.expiresAt) {
+    throw new Error("Payment request has expired");
   }
 
-  return { txSignature: signature, explorer: explorerTxUrl(signature, CLUSTER) };
+  const transition = store.beginPayment(input.reference);
+  if (transition.state === "paid") {
+    if (!transition.request.paidTxSignature) {
+      throw new Error(`Paid payment reference ${input.reference} has no stored signature`);
+    }
+    return paidResult(transition.request.paidTxSignature);
+  }
+  if (transition.state === "paying") {
+    const inFlight = inFlightPayments.get(input.reference);
+    if (inFlight) return inFlight;
+
+    const submitted = transition.request.submittedTxSignature;
+    if (!submitted) {
+      throw new Error(`Payment reference ${input.reference} is already being prepared`);
+    }
+    const reconciled = await reconcileSubmittedPayment(transition.request, submitted);
+    if (reconciled === "paid") return paidResult(submitted);
+    if (reconciled === "failed") {
+      throw new Error(
+        `USDC transfer ${submitted} failed; issue a new payment reference`,
+      );
+    }
+    return pendingResult(submitted, "confirmation_uncertain");
+  }
+
+  const operation = submitPayment(transition.request, input);
+  inFlightPayments.set(input.reference, operation);
+  try {
+    return await operation;
+  } finally {
+    if (inFlightPayments.get(input.reference) === operation) {
+      inFlightPayments.delete(input.reference);
+    }
+  }
 }
 
 // ---------------------------------------------------------------------------
 // Step 7/8 — the shopping agent verifies the payment on-chain by reference.
 // ---------------------------------------------------------------------------
+function validationFailureReason(message: string): VerificationFailureReasonT {
+  if (message === "amount not transferred") return "amount_mismatch";
+  if (message === "recipient not found") return "recipient_mismatch";
+  if (message.includes("reference")) return "reference_mismatch";
+  if (message.includes("transfer")) return "transfer_mismatch";
+  if (message.includes("missing")) return "malformed_transaction";
+  return "validation_failed";
+}
+
 export async function verify(reference: string): Promise<VerificationResult> {
   const stored = store.get(reference);
   if (!stored) {
-    return { status: "invalid", txSignature: null, explorer: null, amount: null };
+    return {
+      status: "invalid",
+      txSignature: null,
+      explorer: null,
+      amount: null,
+      reason: "unknown_reference",
+    };
   }
 
   const referencePk = new PublicKey(reference);
@@ -177,10 +390,26 @@ export async function verify(reference: string): Promise<VerificationResult> {
       if (!(err instanceof FindReferenceError)) throw err;
       if (Date.now() >= deadline) {
         const status = Date.now() > stored.expiresAt ? "expired" : "pending";
-        return { status, txSignature: null, explorer: null, amount: null };
+        return {
+          status,
+          txSignature: null,
+          explorer: null,
+          amount: null,
+          reason: "transaction_not_found",
+        };
       }
       await sleep(Math.min(VERIFY_POLL_MS, deadline - Date.now()));
     }
+  }
+
+  if (signatureInfo.err) {
+    return {
+      status: "invalid",
+      txSignature: signatureInfo.signature,
+      explorer: explorerTxUrl(signatureInfo.signature, CLUSTER),
+      amount: null,
+      reason: "transaction_failed",
+    };
   }
 
   while (true) {
@@ -212,10 +441,12 @@ export async function verify(reference: string): Promise<VerificationResult> {
       if (!(err instanceof ValidateTransferError)) throw err;
       if (err.message === "not found") {
         return {
-          status: Date.now() > stored.expiresAt ? "expired" : "pending",
+          // A signature exists, so expiry must not overwrite an in-flight tx.
+          status: "pending",
           txSignature: signatureInfo.signature,
           explorer: explorerTxUrl(signatureInfo.signature, CLUSTER),
           amount: null,
+          reason: "transaction_not_confirmed",
         };
       }
       console.warn(`[verify] on-chain tx failed validation for ${reference}:`, err.message);
@@ -224,14 +455,17 @@ export async function verify(reference: string): Promise<VerificationResult> {
         txSignature: signatureInfo.signature,
         explorer: explorerTxUrl(signatureInfo.signature, CLUSTER),
         amount: null,
+        reason: validationFailureReason(err.message),
       };
     }
   }
 
+  store.markPaid(reference, signatureInfo.signature);
   return {
     status: "paid",
     txSignature: signatureInfo.signature,
     explorer: explorerTxUrl(signatureInfo.signature, CLUSTER),
     amount: stored.amount,
+    reason: null,
   };
 }
