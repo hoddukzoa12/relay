@@ -118,9 +118,9 @@ open http://localhost:8090    # demo console
 Then either click **"에이전트에게 구매 위임"** in the UI, or:
 
 ```bash
-./scripts/demo.sh "wireless earbuds" 5
+./scripts/demo.sh "wireless earbuds" 25
 # or the buyer CLI:
-cd agents && ./.venv/bin/python -m agentic_broker.buyer.cli --query "wireless earbuds" --budget 5
+cd agents && ./.venv/bin/python -m agentic_broker.buyer.cli --query "wireless earbuds" --budget 25
 ```
 
 You get back a `txSignature` and an **explorer link** — the on-chain proof.

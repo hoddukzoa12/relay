@@ -117,7 +117,7 @@ def _handle_intent(message: dict[str, Any], data: dict[str, Any]) -> dict[str, A
             shipTo=intent.ship_to,
         )
     )
-    catalog_identity = broker.catalog_identity(payment_request.orderRef)
+    quote_identity = broker.catalog_identity(payment_request.orderRef)
     unsigned_cart = {
         "contents": {
             "id": payment_request.orderRef,
@@ -126,8 +126,8 @@ def _handle_intent(message: dict[str, Any], data: dict[str, Any]) -> dict[str, A
             ),
             "cart_items": [
                 {
-                    "sku": catalog_identity["sku"],
-                    "variant_id": catalog_identity["variantId"],
+                    "sku": quote_identity["sku"],
+                    "variant_id": quote_identity["variantId"],
                     "name": payment_request.title,
                     "price": payment_request.price.model_dump(),
                 }

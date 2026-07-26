@@ -316,7 +316,9 @@ for (const item of seedCatalog) {
 const hoodie = setup.products.nodes.find(
   (product) =>
     product.title === "Heavyweight Hoodie P2016" ||
-    product.variants.nodes.some((variant) => variant.sku.startsWith("P2016-")),
+    product.variants.nodes.some((variant) =>
+      variant.sku?.startsWith("P2016-"),
+    ),
 );
 if (hoodie) {
   const data = await shopify(PRODUCT_UPDATE, {

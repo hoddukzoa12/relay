@@ -3,7 +3,7 @@ import type { CatalogProduct } from "@arb/shared";
 import { config } from "./config.js";
 import { shopifyGraphQL } from "./shopify.js";
 
-interface ShopifyCatalogData {
+export interface ShopifyCatalogData {
   products: {
     nodes: {
       id: string;
@@ -14,7 +14,7 @@ interface ShopifyCatalogData {
       variants: {
         nodes: {
           id: string;
-          sku: string;
+          sku: string | null;
           price: string;
           inventoryQuantity: number | null;
         }[];
@@ -59,7 +59,7 @@ function relevance(product: CatalogProduct, query: string): number {
   if (!tokens.length) return 0;
 
   const title = product.title.toLowerCase();
-  const sku = product.sku.toLowerCase();
+  const sku = (product.sku ?? "").toLowerCase();
   const searchable = `${title} ${product.description.toLowerCase()} ${product.tags.join(" ").toLowerCase()}`;
   return tokens.reduce((score, token) => {
     if (title.includes(token)) return score + 4;
@@ -69,7 +69,7 @@ function relevance(product: CatalogProduct, query: string): number {
   }, 0);
 }
 
-function rankAndLimit(
+export function rankAndLimit(
   products: CatalogProduct[],
   query: string,
   limit: number,
@@ -78,7 +78,10 @@ function rankAndLimit(
     .sort((a, b) => {
       const relevanceDelta = relevance(b, query) - relevance(a, query);
       if (relevanceDelta) return relevanceDelta;
-      return a.title.localeCompare(b.title) || a.sku.localeCompare(b.sku);
+      return (
+        a.title.localeCompare(b.title) ||
+        (a.sku ?? "").localeCompare(b.sku ?? "")
+      );
     })
     .slice(0, limit);
 }
@@ -97,22 +100,23 @@ function mockCatalog(): CatalogProduct[] {
   }));
 }
 
-async function fetchLiveCatalog(): Promise<CatalogProduct[]> {
-  const data = await shopifyGraphQL<ShopifyCatalogData>(CATALOG_PRODUCTS, {});
+export function catalogProductsFromShopify(
+  data: ShopifyCatalogData,
+): CatalogProduct[] {
   return data.products.nodes.flatMap((product) => {
     if (product.status !== "ACTIVE") return [];
     const variant = [...product.variants.nodes].sort(
       (a, b) =>
         Number((b.inventoryQuantity ?? 0) > 0) -
           Number((a.inventoryQuantity ?? 0) > 0) ||
-        a.sku.localeCompare(b.sku),
+        (a.sku ?? "").localeCompare(b.sku ?? ""),
     )[0];
     if (!variant) return [];
     return [
       {
         productId: product.id,
         variantId: variant.id,
-        sku: variant.sku,
+        sku: variant.sku ?? "",
         title: product.title,
         description: product.description,
         price: variant.price,
@@ -122,6 +126,11 @@ async function fetchLiveCatalog(): Promise<CatalogProduct[]> {
       },
     ];
   });
+}
+
+async function fetchLiveCatalog(): Promise<CatalogProduct[]> {
+  const data = await shopifyGraphQL<ShopifyCatalogData>(CATALOG_PRODUCTS, {});
+  return catalogProductsFromShopify(data);
 }
 
 /** Return real Shopify variants, with a last-known-good cache for API outages. */
