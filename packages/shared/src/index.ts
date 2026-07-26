@@ -147,12 +147,27 @@ export const OrderConfirmationSchema = z.object({
 });
 export type OrderConfirmation = z.infer<typeof OrderConfirmationSchema>;
 
+export const VerificationFailureReason = [
+  "unknown_reference",
+  "transaction_not_found",
+  "transaction_not_confirmed",
+  "transaction_failed",
+  "amount_mismatch",
+  "recipient_mismatch",
+  "reference_mismatch",
+  "transfer_mismatch",
+  "malformed_transaction",
+  "validation_failed",
+] as const;
+export type VerificationFailureReasonT = (typeof VerificationFailureReason)[number];
+
 /** Result of the payments service verifying a reference on-chain (Step 7/8). */
 export const VerificationResultSchema = z.object({
   status: z.enum(PaymentStatus),
   txSignature: z.string().nullable(),
   explorer: z.string().nullable(),
   amount: z.string().nullable(),
+  reason: z.enum(VerificationFailureReason).nullable(),
 });
 export type VerificationResult = z.infer<typeof VerificationResultSchema>;
 

@@ -61,9 +61,30 @@ const ORDER_MARK_AS_PAID = /* GraphQL */ `
   }
 `;
 
+const FIND_ORDER_BY_REF = /* GraphQL */ `
+  query FindOrderByRef($query: String!, $after: String) {
+    orders(first: 50, after: $after, query: $query, sortKey: CREATED_AT, reverse: true) {
+      nodes {
+        id
+        name
+        displayFinancialStatus
+        customAttributes { key value }
+      }
+      pageInfo { hasNextPage endCursor }
+    }
+  }
+`;
+
+interface ShopifyOrder {
+  id: string;
+  name: string;
+  displayFinancialStatus: string;
+  customAttributes?: { key: string; value: string | null }[];
+}
+
 interface OrderCreateData {
   orderCreate: {
-    order: { id: string; name: string; displayFinancialStatus: string } | null;
+    order: ShopifyOrder | null;
     userErrors: { field: string[] | null; message: string }[];
   };
 }
@@ -73,15 +94,52 @@ interface OrderMarkAsPaidData {
     userErrors: { field: string[] | null; message: string }[];
   };
 }
+interface FindOrderData {
+  orders: {
+    nodes: ShopifyOrder[];
+    pageInfo: { hasNextPage: boolean; endCursor: string | null };
+  };
+}
 
 let mockCounter = 1000;
+const completedOrders = new Map<string, OrderResult>();
+const inFlightOrders = new Map<string, Promise<OrderResult>>();
 
-/** Create a paid order in Shopify (or a mock one if not configured). */
-export async function createPaidOrder(input: OrderInput): Promise<OrderResult> {
-  if (config.mock) {
-    const n = ++mockCounter;
-    console.log(`[commerce] MOCK order for ${input.orderRef} (tx=${input.txSignature.slice(0, 12)}…)`);
-    return { shopifyOrderId: `gid://shopify/Order/${n}`, name: `#${n}`, mocked: true };
+function orderTag(orderRef: string): string {
+  return `relay_order_ref_${orderRef}`;
+}
+
+async function findOrderByRef(orderRef: string): Promise<ShopifyOrder | null> {
+  let after: string | null = null;
+  do {
+    const data: FindOrderData = await shopifyGraphQL<FindOrderData>(
+      FIND_ORDER_BY_REF,
+      {
+        query: `tag:${JSON.stringify(orderTag(orderRef))}`,
+        after,
+      },
+    );
+    const match = data.orders.nodes.find((order) =>
+      order.customAttributes?.some(
+        (attribute) =>
+          attribute.key === "order_ref" && attribute.value === orderRef,
+      ),
+    );
+    if (match) return match;
+    after = data.orders.pageInfo.hasNextPage
+      ? data.orders.pageInfo.endCursor
+      : null;
+  } while (after);
+  return null;
+}
+
+async function createOrder(input: OrderInput): Promise<ShopifyOrder> {
+  const existing = await findOrderByRef(input.orderRef);
+  if (existing) {
+    console.log(
+      `[commerce] reusing Shopify order ${existing.id} for ${input.orderRef}`,
+    );
+    return existing;
   }
 
   const created = await shopifyGraphQL<OrderCreateData>(ORDER_CREATE, {
@@ -97,6 +155,7 @@ export async function createPaidOrder(input: OrderInput): Promise<OrderResult> {
         },
       ],
       note: `Autonomous agent order. Paid on-chain: ${input.explorer}`,
+      tags: ["relay", orderTag(input.orderRef)],
       customAttributes: [
         { key: "order_ref", value: input.orderRef },
         { key: "usdc_amount", value: input.amount },
@@ -112,9 +171,12 @@ export async function createPaidOrder(input: OrderInput): Promise<OrderResult> {
   if (errs.length || !created.orderCreate.order) {
     throw new Error(`orderCreate failed: ${JSON.stringify(errs)}`);
   }
-  const order = created.orderCreate.order;
+  return created.orderCreate.order;
+}
 
-  // Step 9 (cont.) — orderMarkAsPaid.
+async function markOrderPaid(order: ShopifyOrder): Promise<void> {
+  if (order.displayFinancialStatus === "PAID") return;
+
   const paid = await shopifyGraphQL<OrderMarkAsPaidData>(ORDER_MARK_AS_PAID, {
     input: { id: order.id },
   });
@@ -131,6 +193,39 @@ export async function createPaidOrder(input: OrderInput): Promise<OrderResult> {
       }`,
     );
   }
+}
 
+async function createPaidOrderOnce(input: OrderInput): Promise<OrderResult> {
+  if (config.mock) {
+    const n = ++mockCounter;
+    console.log(`[commerce] MOCK order for ${input.orderRef} (tx=${input.txSignature.slice(0, 12)}…)`);
+    return { shopifyOrderId: `gid://shopify/Order/${n}`, name: `#${n}`, mocked: true };
+  }
+
+  // Creation and mark-paid are deliberately separate. If mark-paid fails,
+  // retry finds the custom-attribute-tagged order and skips orderCreate.
+  const order = await createOrder(input);
+  await markOrderPaid(order);
   return { shopifyOrderId: order.id, name: order.name, mocked: false };
+}
+
+/** Create a paid order once per orderRef (or return the original result). */
+export async function createPaidOrder(input: OrderInput): Promise<OrderResult> {
+  const completed = completedOrders.get(input.orderRef);
+  if (completed) return completed;
+
+  const inFlight = inFlightOrders.get(input.orderRef);
+  if (inFlight) return inFlight;
+
+  const operation = createPaidOrderOnce(input);
+  inFlightOrders.set(input.orderRef, operation);
+  try {
+    const result = await operation;
+    completedOrders.set(input.orderRef, result);
+    return result;
+  } finally {
+    if (inFlightOrders.get(input.orderRef) === operation) {
+      inFlightOrders.delete(input.orderRef);
+    }
+  }
 }

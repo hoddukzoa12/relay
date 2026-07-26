@@ -7,6 +7,18 @@ from pydantic import BaseModel, Field
 
 Network = Literal["solana-devnet", "solana-mainnet"]
 PaymentStatus = Literal["pending", "paid", "expired", "invalid"]
+VerificationFailureReason = Literal[
+    "unknown_reference",
+    "transaction_not_found",
+    "transaction_not_confirmed",
+    "transaction_failed",
+    "amount_mismatch",
+    "recipient_mismatch",
+    "reference_mismatch",
+    "transfer_mismatch",
+    "malformed_transaction",
+    "validation_failed",
+]
 INTENT_MANDATE_DATA_KEY = "ap2.mandates.IntentMandate"
 CART_MANDATE_DATA_KEY = "ap2.mandates.CartMandate"
 PAYMENT_MANDATE_DATA_KEY = "ap2.mandates.PaymentMandate"
@@ -120,3 +132,13 @@ class OrderConfirmation(BaseModel):
     txSignature: Optional[str] = None
     explorer: Optional[str] = None
     shopifyOrderId: Optional[str] = None
+
+
+class VerificationResult(BaseModel):
+    """Payments-service result after validating a reference on-chain."""
+
+    status: PaymentStatus
+    txSignature: Optional[str] = None
+    explorer: Optional[str] = None
+    amount: Optional[str] = None
+    reason: Optional[VerificationFailureReason] = None

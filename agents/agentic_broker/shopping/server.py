@@ -290,7 +290,10 @@ def quote(intent: PurchaseIntent) -> PaymentRequest:
 
 @app.post("/a2a/settle", response_model=OrderConfirmation)
 def settle(req: SettlementRequest) -> OrderConfirmation:
-    return broker.handle_settle(req)
+    try:
+        return broker.handle_settle(req)
+    except broker.FulfillmentPendingError as exc:
+        raise HTTPException(status_code=503, detail=str(exc)) from exc
 
 
 def main() -> None:

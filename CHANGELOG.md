@@ -6,6 +6,11 @@ Format: [Keep a Changelog](https://keepachangelog.com/); versioning is SemVer-is
 
 ## [Unreleased]
 
+### Fixed
+- Made payment references single-use with pending/paying/paid transitions,
+  reconciled uncertain Solana confirmations without resending, and made broker
+  settlement plus Shopify order creation idempotent by `orderRef` (#20).
+
 ## [v0.2.0-commerce-protocol] - 2026-07-24
 
 ### Added

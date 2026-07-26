@@ -71,7 +71,7 @@ wallets/                your solana keypairs (git-ignored)
 - **Solana CLI** (for keypairs / airdrops) — you already have wallets + devnet USDC
 - Optional now, needed for the full demo:
   - **Gemini API key** (free tier) — https://aistudio.google.com/apikey
-  - **Shopify dev store** + Admin API access token
+  - **Shopify dev store** + Admin API token with `read_orders` + `write_orders`
   - **gcloud** for Cloud Run
 
 ## Setup
@@ -200,8 +200,9 @@ zero human clicks at payment, a `paid` Shopify order, a live URL, ≤3-min repro
 
 - Wallet keys and API tokens live only in `.env` / Secret Manager — never
   committed (`.gitignore` enforces this).
-- The payment-request store is process-local (in-memory); a restart forgets
-  pending requests. Fine for the demo; use Firestore/Redis for production.
+- Payment and fulfillment idempotency state is process-local (in-memory); a
+  restart forgets paid references and settled/pending-fulfillment orders. This
+  is acceptable for the devnet demo only; use Firestore/Redis before production.
 - Devnet only. Do not point this at mainnet without an escrow/settlement review.
 
 ## License

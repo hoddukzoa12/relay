@@ -1,0 +1,31 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://agentic-resell-broker/schemas/verification-result.json",
+  "title": "VerificationResult",
+  "description": "Result of validating an issued Solana Pay reference on-chain.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["status", "txSignature", "explorer", "amount", "reason"],
+  "properties": {
+    "status": { "enum": ["pending", "paid", "expired", "invalid"] },
+    "txSignature": { "type": ["string", "null"] },
+    "explorer": { "type": ["string", "null"] },
+    "amount": { "type": ["string", "null"] },
+    "reason": {
+      "type": ["string", "null"],
+      "enum": [
+        "unknown_reference",
+        "transaction_not_found",
+        "transaction_not_confirmed",
+        "transaction_failed",
+        "amount_mismatch",
+        "recipient_mismatch",
+        "reference_mismatch",
+        "transfer_mismatch",
+        "malformed_transaction",
+        "validation_failed",
+        null
+      ]
+    }
+  }
+}
