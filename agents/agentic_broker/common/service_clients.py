@@ -92,6 +92,13 @@ def commerce_create_order(payload: dict[str, Any]) -> dict[str, Any]:
     return _post(f"{settings.commerce_url}/orders", payload)
 
 
+def commerce_orders(buyer_address: str) -> dict[str, Any]:
+    return _get(
+        f"{settings.commerce_url}/orders",
+        {"buyerAddress": buyer_address},
+    )
+
+
 # --- peer agent (A2A over HTTP) ---------------------------------------------
 def a2a_quote(intent: dict[str, Any]) -> dict[str, Any]:
     return _post(f"{settings.shopping_agent_url}/a2a/quote", intent)

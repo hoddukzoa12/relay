@@ -2,20 +2,23 @@
 from __future__ import annotations
 
 import os
+from datetime import datetime, timezone
 from decimal import Decimal
 from pathlib import Path
 from typing import Any, Optional
 
 import httpx
-from fastapi import FastAPI
+from fastapi import FastAPI, Header, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import HTMLResponse
+from fastapi.responses import HTMLResponse, Response
 from pydantic import BaseModel
 
 from ..common import service_clients
 from ..common.agent_cards import buyer_agent_card
 from ..common.config import settings
-from . import flow
+from ..common.contracts import IntentMandate
+from ..common.mandates import verify_wallet_signature
+from . import auth, flow
 
 
 def _cors_origins() -> list[str]:
@@ -38,11 +41,12 @@ app.add_middleware(
     CORSMiddleware,
     allow_origins=_cors_origins(),
     allow_methods=["GET", "POST", "OPTIONS"],
-    allow_headers=["Content-Type"],
+    allow_headers=["Authorization", "Content-Type"],
     max_age=600,
 )
 
 _WEB_INDEX = Path(__file__).resolve().parents[1] / "web" / "index.html"
+_WEB_AUTH_CLIENT = Path(__file__).resolve().parents[1] / "web" / "auth-client.js"
 
 
 class BuyRequest(BaseModel):
@@ -50,6 +54,7 @@ class BuyRequest(BaseModel):
     query: Optional[str] = None
     budget: Optional[float] = None
     shipTo: Optional[str] = None
+    intentMandate: Optional[IntentMandate] = None
 
 
 @app.get("/health")
@@ -68,6 +73,55 @@ def home() -> str:
     if _WEB_INDEX.exists():
         return _WEB_INDEX.read_text(encoding="utf-8")
     return "<h1>Agentic Resell Broker</h1><p>Demo UI missing.</p>"
+
+
+@app.get("/auth-client.js")
+def auth_client() -> Response:
+    if not _WEB_AUTH_CLIENT.exists():
+        return Response("// Relay auth client missing\n", media_type="text/javascript")
+    return Response(
+        _WEB_AUTH_CLIENT.read_text(encoding="utf-8"),
+        media_type="text/javascript",
+    )
+
+
+@app.get("/auth/config")
+def auth_config() -> dict[str, Any]:
+    """Public Clerk browser configuration; never exposes the secret key."""
+    return {
+        "configured": bool(
+            settings.clerk_publishable_key
+            and settings.clerk_issuer
+            and settings.clerk_secret_key
+        ),
+        "publishableKey": settings.clerk_publishable_key,
+        "issuer": settings.clerk_issuer,
+    }
+
+
+def _identity(authorization: Optional[str]) -> auth.ClerkIdentity:
+    scheme, _, token = (authorization or "").partition(" ")
+    if scheme.lower() != "bearer" or not token:
+        raise HTTPException(status_code=401, detail="Clerk session required")
+    try:
+        return auth.verify_session_token(token)
+    except auth.AuthenticationError as exc:
+        raise HTTPException(status_code=401, detail=str(exc)) from exc
+
+
+@app.get("/auth/me")
+def auth_me(authorization: Optional[str] = Header(default=None)) -> dict[str, str]:
+    identity = _identity(authorization)
+    return {
+        "userId": identity.user_id,
+        "walletAddress": identity.wallet_address,
+    }
+
+
+@app.get("/my-orders")
+def my_orders(authorization: Optional[str] = Header(default=None)) -> dict[str, Any]:
+    identity = _identity(authorization)
+    return service_clients.commerce_orders(identity.wallet_address)
 
 
 @app.get("/wallets")
@@ -169,13 +223,59 @@ def wallet_balances() -> dict[str, Any]:
 
 
 @app.post("/buy")
-def buy(body: BuyRequest) -> dict[str, Any]:
+def buy(
+    body: BuyRequest,
+    authorization: Optional[str] = Header(default=None),
+) -> dict[str, Any]:
     if body.text:
         return flow.buy_from_text(body.text)
+    query = body.query or "wireless earbuds"
+    budget = body.budget if body.budget is not None else 30.0
+    ship_to = body.shipTo or settings.default_ship_to
+
+    identity: auth.ClerkIdentity | None = None
+    if body.intentMandate is not None:
+        identity = _identity(authorization)
+        mandate = body.intentMandate
+        mandate_data = mandate.model_dump(exclude_none=True)
+        if mandate.signer_wallet != identity.wallet_address:
+            raise HTTPException(
+                status_code=403,
+                detail="IntentMandate signer does not match the Clerk wallet",
+            )
+        if not verify_wallet_signature(
+            mandate_data, mandate.signature, identity.wallet_address
+        ):
+            raise HTTPException(
+                status_code=422, detail="Invalid IntentMandate wallet signature"
+            )
+        try:
+            expiry = datetime.fromisoformat(
+                mandate.intent_expiry.replace("Z", "+00:00")
+            )
+        except ValueError as exc:
+            raise HTTPException(
+                status_code=422, detail="Invalid IntentMandate expiry"
+            ) from exc
+        if expiry.tzinfo is None or expiry <= datetime.now(timezone.utc):
+            raise HTTPException(status_code=422, detail="IntentMandate has expired")
+        if (
+            mandate.user_cart_confirmation_required
+            or mandate.natural_language_description != query
+            or mandate.ship_to != ship_to
+            or Decimal(mandate.price_ceiling.amount) != Decimal(str(budget))
+        ):
+            raise HTTPException(
+                status_code=422,
+                detail="IntentMandate does not match the requested purchase",
+            )
+
     return flow.buy(
-        query=body.query or "wireless earbuds",
-        budget=body.budget if body.budget is not None else 30.0,
-        ship_to=body.shipTo or settings.default_ship_to,
+        query=query,
+        budget=budget,
+        ship_to=ship_to,
+        intent_mandate=body.intentMandate,
+        identity_wallet=identity.wallet_address if identity else None,
     )
 
 

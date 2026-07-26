@@ -1,9 +1,10 @@
 # Shopify product-page agent widget
 
 The Relay widget delegates to the buyer agent's `POST /buy` rail. It does **not**
-add to cart, open Shopify checkout, or ask a browser wallet to approve payment.
-The buyer service performs the autonomous Solana Pay signature, while Shopify is
-used only as the final order ledger.
+add to cart or open Shopify checkout. An optionally signed-in human wallet
+approves exactly one price-and-expiry-bounded AP2 `IntentMandate`; the separate
+buyer-agent wallet performs the later Solana Pay signature autonomously, while
+Shopify is used only as the final order ledger.
 
 ## 1. Allow the storefront origin
 
@@ -12,6 +13,10 @@ Origins include the scheme and host only—no path and no trailing slash:
 
 ```dotenv
 BUYER_CORS_ORIGINS=https://YOUR-STORE.myshopify.com,https://www.YOUR-CUSTOM-DOMAIN.com
+CLERK_PUBLISHABLE_KEY=pk_test_...
+CLERK_SECRET_KEY=sk_test_...
+CLERK_ISSUER=https://YOUR-INSTANCE.clerk.accounts.dev
+CLERK_JWKS_URL=https://YOUR-INSTANCE.clerk.accounts.dev/.well-known/jwks.json
 ```
 
 `SHOPIFY_STORE_DOMAIN` is also converted to an `https://` origin and allowed
@@ -66,6 +71,10 @@ curl https://YOUR-TUNNEL.example/wallet-balances
 
 The first response should contain `"ok": true`; the second should show the buyer
 and merchant addresses and their SOL/USDC balances.
+
+Clerk must have Solana enabled as a Web3 sign-in provider. Because the same
+Clerk instance is Shopify's OIDC provider, each storefront user also needs a
+verified email; Shopify requires `email` and `email_verified: true`.
 
 ## 3. Add the self-contained widget to the product template
 
@@ -133,7 +142,7 @@ Use the exact origin visible in the storefront browser address bar:
 curl -i -X OPTIONS 'https://YOUR-TUNNEL.example/buy' \
   -H 'Origin: https://YOUR-STORE.myshopify.com' \
   -H 'Access-Control-Request-Method: POST' \
-  -H 'Access-Control-Request-Headers: content-type'
+  -H 'Access-Control-Request-Headers: authorization,content-type'
 ```
 
 The response should include:
@@ -162,11 +171,14 @@ reintroduce human checkout approval and break the autonomous payment path.
 1. `make check-wallets` shows buyer SOL for fees and enough Circle devnet USDC.
 2. `./scripts/dev.sh` is running and the HTTPS tunnel health check passes.
 3. The storefront origin is present in `BUYER_CORS_ORIGINS`.
-4. The widget shows `[ WALLET READY ]`.
-5. Click **Delegate autonomous purchase** once.
-6. Show the inline states: `[ A2A RECEIVED ]` → `[ SIGNED ]` →
+4. The widget shows `[ WALLET READY ]`; this is the agent payer, not the human.
+5. Select **Wallet sign-in** and show the backend-verified human wallet address.
+6. Click **Delegate autonomous purchase**, then approve the one
+   `IntentMandate` signature (price ceiling + 15-minute expiry).
+7. Show the inline states: `[ A2A RECEIVED ]` → `[ SIGNED ]` →
    `[ ON-CHAIN ]` → `[ PAID ]`.
-7. Open **View explorer ↗** to show the devnet transaction proof.
+8. Open **View explorer ↗**, then **My orders**, to show the devnet proof and
+   the Shopify order filtered by the signed-in wallet.
 
 The standalone buyer console at `http://localhost:8090` remains the fallback if
 the Shopify theme or tunnel is unavailable.

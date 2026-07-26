@@ -129,6 +129,63 @@
       box-shadow: 0 0 10px var(--green);
     }
 
+    .identity-panel {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 18px;
+      margin-bottom: 14px;
+      padding: 14px 16px;
+      border: 1px solid rgba(153, 69, 255, 0.38);
+      border-radius: 14px;
+      background: linear-gradient(100deg, var(--purple-soft), rgba(14, 19, 29, 0.78));
+    }
+
+    .identity-copy { min-width: 0; }
+    .identity-title { display: block; margin-bottom: 3px; font-size: 13px; }
+    .identity-wallet {
+      display: block;
+      overflow: hidden;
+      color: var(--muted);
+      font: 600 11px/1.4 ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+    }
+
+    .identity-actions { display: flex; flex: 0 0 auto; gap: 8px; }
+    .secondary-button {
+      padding: 8px 11px;
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      background: var(--panel-strong);
+      color: var(--muted-strong);
+      cursor: pointer;
+      font-size: 11px;
+      font-weight: 800;
+    }
+    .secondary-button:hover:not(:disabled) { border-color: var(--purple); color: var(--fg); }
+    .secondary-button:disabled { cursor: not-allowed; opacity: .5; }
+
+    .orders-panel {
+      margin: -4px 0 14px;
+      padding: 14px 16px;
+      border: 1px solid var(--line);
+      border-radius: 12px;
+      background: rgba(14, 19, 29, 0.72);
+    }
+    .orders-panel[hidden] { display: none; }
+    .orders-title { margin: 0 0 9px; font-size: 13px; }
+    .order-row {
+      display: grid;
+      grid-template-columns: minmax(0, 1fr) auto;
+      gap: 4px 14px;
+      padding: 8px 0;
+      border-top: 1px solid var(--line-soft);
+      font-size: 11px;
+    }
+    .order-row a { color: var(--green); }
+    .order-meta { color: var(--muted); }
+
     .wallet-strip {
       display: grid;
       grid-template-columns: repeat(4, minmax(0, 1fr));
@@ -711,6 +768,21 @@
       <div class="network-badge"><span class="network-dot"></span><span id="networkLabel">devnet live</span></div>
     </header>
 
+    <section class="identity-panel" aria-label="Human wallet identity">
+      <div class="identity-copy">
+        <strong class="identity-title">Human identity · Clerk + Solana</strong>
+        <span class="identity-wallet" id="humanWallet">선택 사항 · 로그인 없이도 에이전트 API는 동작합니다.</span>
+      </div>
+      <div class="identity-actions">
+        <button class="secondary-button" id="ordersButton" type="button" disabled>내 주문</button>
+        <button class="secondary-button" id="authButton" type="button">지갑으로 로그인</button>
+      </div>
+    </section>
+    <section class="orders-panel" id="ordersPanel" hidden>
+      <h2 class="orders-title">이 지갑의 주문</h2>
+      <div id="ordersList"></div>
+    </section>
+
     <section class="wallet-strip" aria-label="Wallet and network information">
       <div class="wallet-item">
         <div class="eyebrow"><span>Buyer agent</span><span>payer</span></div>
@@ -835,9 +907,11 @@
     </div>
   </main>
 
+  <script src="/auth-client.js"></script>
   <script>
     const $ = (id) => document.getElementById(id);
     const walletState = { cluster: "devnet", data: null };
+    const authState = { client: null, identity: null };
 
     const initialSteps = [
       {
@@ -885,6 +959,64 @@
         throw new Error(payload.detail || `HTTP ${response.status}`);
       }
       return payload;
+    }
+
+    function updateIdentity(identity) {
+      authState.identity = identity;
+      if (identity?.walletAddress) {
+        setAddress("humanWallet", identity.walletAddress);
+        $("authButton").textContent = "로그아웃";
+        $("ordersButton").disabled = false;
+      } else {
+        $("humanWallet").textContent = "선택 사항 · 로그인 없이도 에이전트 API는 동작합니다.";
+        $("humanWallet").title = "";
+        $("authButton").textContent = "지갑으로 로그인";
+        $("ordersButton").disabled = true;
+        $("ordersPanel").hidden = true;
+      }
+    }
+
+    async function loadIdentity() {
+      try {
+        authState.client = window.RelayAuth.client("");
+        authState.client.subscribe(updateIdentity);
+        const status = await authState.client.ready;
+        if (!status.configured) {
+          $("authButton").disabled = true;
+          $("authButton").textContent = "Clerk 미설정";
+        }
+      } catch (error) {
+        $("authButton").disabled = true;
+        $("authButton").textContent = "Clerk 연결 실패";
+        $("humanWallet").textContent = errorMessage(error);
+      }
+    }
+
+    function renderOrders(orders) {
+      const list = $("ordersList");
+      list.replaceChildren();
+      if (!orders.length) {
+        list.textContent = "이 지갑으로 기록된 주문이 없습니다.";
+        return;
+      }
+      orders.forEach((order) => {
+        const row = document.createElement("div");
+        row.className = "order-row";
+        const title = document.createElement("strong");
+        title.textContent = `${order.name} · ${order.title || "Relay order"}`;
+        const amount = document.createElement("span");
+        amount.textContent = `${order.amount} USDC`;
+        const meta = document.createElement("span");
+        meta.className = "order-meta";
+        meta.textContent = `${order.status} · ${new Date(order.createdAt).toLocaleString()}`;
+        const proof = document.createElement("a");
+        proof.textContent = "Explorer ↗";
+        proof.href = order.explorer;
+        proof.target = "_blank";
+        proof.rel = "noopener noreferrer";
+        row.append(title, amount, meta, proof);
+        list.append(row);
+      });
     }
 
     async function loadWallets() {
@@ -1149,6 +1281,29 @@
 
     $("copySignature").addEventListener("click", copySignature);
 
+    $("authButton").addEventListener("click", async () => {
+      try {
+        if (authState.identity) await authState.client.signOut();
+        else await authState.client.signIn();
+      } catch (error) {
+        $("humanWallet").textContent = errorMessage(error);
+      }
+    });
+
+    $("ordersButton").addEventListener("click", async () => {
+      const panel = $("ordersPanel");
+      panel.hidden = false;
+      $("ordersList").textContent = "주문을 불러오는 중…";
+      try {
+        const response = await authState.client.signedRequest("/my-orders");
+        const payload = await response.json();
+        if (!response.ok) throw new Error(payload.detail || `HTTP ${response.status}`);
+        renderOrders(payload.orders || []);
+      } catch (error) {
+        $("ordersList").textContent = errorMessage(error);
+      }
+    });
+
     $("go").addEventListener("click", async () => {
       const query = $("query").value.trim();
       const budget = Number($("budget").value);
@@ -1172,11 +1327,24 @@
       ]);
 
       try {
-        const response = await fetch("/buy", {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ query, budget, shipTo }),
-        });
+        const payload = { query, budget, shipTo };
+        let response;
+        if (authState.identity) {
+          button.textContent = "IntentMandate 서명을 확인해 주세요…";
+          payload.intentMandate = await authState.client.signIntent(payload);
+          button.textContent = "에이전트가 자율 정산 중…";
+          response = await authState.client.signedRequest("/buy", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify(payload),
+          });
+        } else {
+          response = await fetch("/buy", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify(payload),
+          });
+        }
         const text = await response.text();
         let result = {};
         try {
@@ -1199,6 +1367,7 @@
 
     resetTimeline();
     loadWallets();
+    loadIdentity();
   </script>
 </body>
 </html>

@@ -25,6 +25,12 @@ class Settings:
     google_api_key: str = os.getenv("GOOGLE_API_KEY", "")
     gemini_model: str = os.getenv("GEMINI_MODEL", "gemini-2.5-flash")
 
+    clerk_publishable_key: str = os.getenv("CLERK_PUBLISHABLE_KEY", "")
+    clerk_secret_key: str = os.getenv("CLERK_SECRET_KEY", "")
+    clerk_issuer: str = os.getenv("CLERK_ISSUER", "").rstrip("/")
+    clerk_jwks_url: str = os.getenv("CLERK_JWKS_URL", "")
+    clerk_api_url: str = os.getenv("CLERK_API_URL", "https://api.clerk.com").rstrip("/")
+
     markup_pct: float = float(os.getenv("BROKER_MARKUP_PCT", "15"))
     cluster: str = os.getenv("SOLANA_CLUSTER", "devnet")
     default_ship_to: str = os.getenv(

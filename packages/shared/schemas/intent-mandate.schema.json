@@ -22,6 +22,10 @@
     "price_ceiling": { "$ref": "#/$defs/money" },
     "ship_to": { "type": "string" },
     "intent_expiry": { "type": "string", "format": "date-time" },
+    "signer_wallet": {
+      "type": "string",
+      "description": "Signed-in human Solana wallet for delegated intents; omitted for the agent-only compatibility path."
+    },
     "signature": { "type": "string", "minLength": 1 }
   },
   "$defs": {

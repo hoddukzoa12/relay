@@ -90,7 +90,9 @@ def catalog_identity(order_ref: str) -> dict[str, str]:
     return {"sku": order.sku, "variantId": order.product_id}
 
 
-def handle_settle(req: SettlementRequest) -> OrderConfirmation:
+def handle_settle(
+    req: SettlementRequest, *, identity_wallet: str | None = None
+) -> OrderConfirmation:
     """Steps 7–10: verify on-chain, then record the paid Shopify order."""
     with _orders_lock:
         order = _orders.get(req.orderRef)
@@ -159,12 +161,14 @@ def handle_settle(req: SettlementRequest) -> OrderConfirmation:
                 order.fulfillment_error = None
             order.fulfillment_status = "fulfilling"
 
-    # Single-buyer demo: learn the buyer wallet from the payments service for the
-    # order record. In a multi-buyer system this would come off the verified tx.
-    try:
-        buyer_wallet = service_clients.payments_wallets().get("buyer", "")
-    except Exception:  # noqa: BLE001
-        buyer_wallet = ""
+    # A signed-in human wallet is the order owner, but never the payer. The
+    # agent's configured wallet still signs and sends the USDC transfer.
+    buyer_wallet = identity_wallet
+    if not buyer_wallet:
+        try:
+            buyer_wallet = service_clients.payments_wallets().get("buyer", "")
+        except Exception:  # noqa: BLE001
+            buyer_wallet = ""
 
     try:
         result = tools.record_order(
