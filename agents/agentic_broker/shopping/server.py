@@ -6,7 +6,7 @@ import logging
 from typing import Any
 from uuid import uuid4
 
-from fastapi import FastAPI, HTTPException
+from fastapi import FastAPI, Header, HTTPException
 
 from ..common import service_clients
 from ..common.agent_cards import shopping_agent_card
@@ -311,9 +311,18 @@ def quote(intent: PurchaseIntent) -> PaymentRequest:
 
 
 @app.post("/a2a/settle", response_model=OrderConfirmation)
-def settle(req: SettlementRequest) -> OrderConfirmation:
+def settle(
+    req: SettlementRequest,
+    x_relay_authenticated_wallet: str | None = Header(default=None),
+) -> OrderConfirmation:
     try:
-        return broker.handle_settle(req)
+        # This header is accepted only on the private Cloud Run service path.
+        # MCP derives it from a Clerk-verified identity; it is weaker than the
+        # wallet-signed AP2 IntentMandate and is attribution metadata only.
+        return broker.handle_settle(
+            req,
+            identity_wallet=x_relay_authenticated_wallet,
+        )
     except broker.FulfillmentPendingError as exc:
         raise HTTPException(status_code=503, detail=str(exc)) from exc
 

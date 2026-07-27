@@ -31,17 +31,74 @@ devnet before it records the Shopify order.
 ## Authentication boundary
 
 The Cloud Run MCP service is publicly routable so remote clients can reach it,
-but the mounted protocol endpoint fails closed unless every request includes:
+but the mounted protocol endpoint fails closed. User-facing clients authenticate
+with a Clerk OAuth access token:
 
 ```http
-X-Relay-API-Key: <high-entropy shared secret>
+Authorization: Bearer <Clerk OAuth access token>
 ```
 
-This check covers initialization, tool discovery, and tool calls. `/health` is
-the only public route and exposes no key or wallet material. The secret is
-stored as `relay-mcp-api-key` in Secret Manager and injected only into the MCP
-runtime as `MCP_API_KEY`. Never put the key in a URL, commit it, or send it to
-an untrusted MCP host.
+Relay verifies the token signature and issuer against `CLERK_JWKS_URL`, checks
+with Clerk that it is an active OAuth access token with the `openid` scope, and
+loads the token subject's verified Solana web3 wallet from Clerk. A session JWT
+or OIDC ID token is not accepted in place of the OAuth access token.
+
+The server exposes RFC 9728 protected-resource metadata at:
+
+```text
+/.well-known/oauth-protected-resource/mcp
+```
+
+The `401` challenge points clients to that document, which points to
+`CLERK_ISSUER`. Standards-aware MCP clients then discover Clerk's authorization
+and token endpoints and use authorization code + S256 PKCE.
+
+### Clerk setup
+
+Before deployment, a human administrator must use the Clerk Dashboard's
+**OAuth applications** settings to:
+
+1. Enable dynamic OAuth client registration for MCP clients that require it.
+2. Set dynamic-registration default scopes to `openid profile email`; some
+   clients, including ChatGPT and Claude, omit `scope` when registering.
+3. Keep JWT OAuth access tokens enabled so Relay can verify them with the
+   configured JWKS.
+
+Dynamic registration is intentionally an administrator decision because it
+opens a public client-registration endpoint. A known client may instead use a
+pre-registered public OAuth application with PKCE and its exact redirect URI.
+See Clerk's [MCP client guide](https://clerk.com/docs/guides/ai/mcp/connect-mcp-client)
+and [OAuth implementation guide](https://clerk.com/docs/guides/configure/auth-strategies/oauth/how-clerk-implements-oauth).
+
+### Order ownership
+
+On `settle`, Relay forwards only the wallet resolved server-side from the Clerk
+token to the private shopping service. Shopify records that address as
+`buyer_wallet`, while the configured Relay buyer agent wallet still signs and
+sends USDC. OAuth-authenticated status and refund calls are limited to orders
+whose `buyer_wallet` matches the caller.
+
+The internal `X-Relay-Authenticated-Wallet` header is attribution metadata on
+the private MCP-to-shopping path. It is not accepted as an MCP header or tool
+argument and must never be trusted if shopping is made public. Shopping must
+remain behind Cloud Run IAM. The existing wallet-signed AP2 IntentMandate path
+remains the stronger proof for browser/human delegation; OAuth attribution is
+a separate authenticated agent-client path and does not weaken it.
+
+### Service API key
+
+The shared API key remains only for trusted service-to-service or pure-agent
+clients that legitimately have no user wallet:
+
+```http
+X-Relay-API-Key: <high-entropy service secret>
+```
+
+This compatibility path is a privileged service principal, not a user
+credential. It keeps existing autonomous clients working and attributes their
+orders to the configured Relay buyer wallet. Do not distribute it to end users;
+rotate it if exposed. The secret remains stored as `relay-mcp-api-key` and is
+injected only as `MCP_API_KEY`.
 
 The payments, commerce, and shopping services remain private behind Cloud Run
 IAM. The `relay-mcp` service account receives only `roles/run.invoker` on those
@@ -66,8 +123,17 @@ MCP_API_KEY="$MCP_API_KEY" \
 ```
 
 It initializes a Streamable HTTP session and asserts that all seven tools are
-present. Add `--purchase` for the autonomous payment path and `--refund` for
-the full bidirectional on-chain lifecycle:
+present. For a user-attributed smoke test, pass a Clerk OAuth access token
+obtained by an OAuth client:
+
+```bash
+MCP_OAUTH_TOKEN="<access-token>" \
+  agents/.venv/bin/python scripts/mcp-client.py
+```
+
+The script requires exactly one of `MCP_OAUTH_TOKEN` and `MCP_API_KEY`. Add
+`--purchase` for the autonomous payment path and `--refund` for the full
+bidirectional on-chain lifecycle:
 
 ```bash
 MCP_API_KEY="$MCP_API_KEY" \
@@ -83,32 +149,30 @@ MCP_API_KEY="$MCP_API_KEY" \
   --order-ref ord_example --refund
 ```
 
-Generic remote-client configuration:
+Generic OAuth-aware remote-client configuration needs only the resource URL;
+the client discovers Clerk from Relay's protected-resource metadata:
 
 ```json
 {
   "mcpServers": {
     "relay": {
       "type": "http",
-      "url": "https://mcp-1018608922006.us-central1.run.app/mcp",
-      "headers": {
-        "X-Relay-API-Key": "${RELAY_MCP_API_KEY}"
-      }
+      "url": "https://mcp-763kssfe2q-uc.a.run.app/mcp"
     }
   }
 }
 ```
 
-Client configuration syntax varies, but the URL and header are the same. For a
-browser-based inspector, set `MCP_CORS_ORIGINS` and `MCP_ALLOWED_ORIGINS` to
-the inspector origin and configure the same header. Relay keeps MCP SDK
+Client configuration syntax varies. For a browser-based inspector, set
+`MCP_CORS_ORIGINS` and `MCP_ALLOWED_ORIGINS` to the inspector origin; the
+browser sends the OAuth bearer header after PKCE completes. Relay keeps MCP SDK
 DNS-rebinding protection enabled and allowlists both Cloud Run hostnames
 through `MCP_ALLOWED_HOSTS`.
 
 Unauthenticated protocol access must return `401`:
 
 ```bash
-curl -i -X POST https://mcp-1018608922006.us-central1.run.app/mcp \
+curl -i -X POST https://mcp-763kssfe2q-uc.a.run.app/mcp \
   -H 'Content-Type: application/json' \
   --data '{"jsonrpc":"2.0","id":1,"method":"tools/list"}'
 ```
@@ -116,7 +180,9 @@ curl -i -X POST https://mcp-1018608922006.us-central1.run.app/mcp \
 ## Cloud Run deployment
 
 Cloud deployment is an explicit approval-gated operation because it changes
-billable project state. The approved 2026-07-27 deployment:
+billable project state. Do not enable Clerk dynamic registration or deploy this
+change without the coordinator/human approval gate. The previous approved
+2026-07-27 deployment:
 
 - builds three images (`payments`, `commerce`, and the shared `agents` image);
 - redeploys payments, commerce, shopping, and buyer from the current commit;
@@ -132,10 +198,24 @@ billable project state. The approved 2026-07-27 deployment:
 Validate the deployed remote URL:
 
 ```bash
-RELAY_MCP_URL="https://mcp-1018608922006.us-central1.run.app/mcp" \
+RELAY_MCP_URL="https://mcp-763kssfe2q-uc.a.run.app/mcp" \
 MCP_API_KEY="$MCP_API_KEY" \
   agents/.venv/bin/python scripts/mcp-client.py --purchase --refund
 ```
+
+After the OAuth configuration and deployment are approved, validate user
+attribution with a real Clerk OAuth access token and a small devnet purchase:
+
+```bash
+RELAY_MCP_URL="https://mcp-763kssfe2q-uc.a.run.app/mcp" \
+MCP_OAUTH_TOKEN="$MCP_OAUTH_TOKEN" \
+  agents/.venv/bin/python scripts/mcp-client.py \
+  --purchase --query "wireless earbuds" --budget 1
+```
+
+Then confirm the Shopify order's `buyer_wallet` custom attribute matches the
+verified Clerk user's Solana wallet. The unauthenticated curl check above must
+still return `401`.
 
 The deployed purchase/refund proof and Cloud Run inventory are recorded in
 [`evidence/issue-17-mcp-deployed.md`](evidence/issue-17-mcp-deployed.md).

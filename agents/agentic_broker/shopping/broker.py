@@ -33,6 +33,7 @@ class _OrderState:
     amount: str
     reference: str
     ship_to: str
+    buyer_wallet: str = ""
     payment_status: Literal["pending", "paid"] = "pending"
     paid_tx_signature: str | None = None
     explorer: str | None = None
@@ -102,9 +103,27 @@ def handle_settle(
     if req.reference != order.reference:
         return OrderConfirmation(orderRef=req.orderRef, status="invalid")
 
+    # Bind ownership on the first settlement attempt so a retry under another
+    # principal cannot change Shopify attribution after payment moves. This is
+    # metadata only; payment verification and the payer wallet are unchanged.
+    buyer_wallet = identity_wallet
+    if not buyer_wallet:
+        try:
+            buyer_wallet = service_clients.payments_wallets().get("buyer", "")
+        except Exception:  # noqa: BLE001
+            buyer_wallet = ""
+
     # Fast idempotent replay path: a completed settlement returns exactly the
     # original confirmation without re-verifying or touching Shopify.
     with order.lock:
+        if (
+            order.buyer_wallet
+            and buyer_wallet
+            and order.buyer_wallet != buyer_wallet
+        ):
+            return OrderConfirmation(orderRef=req.orderRef, status="invalid")
+        if not order.buyer_wallet:
+            order.buyer_wallet = buyer_wallet
         if order.confirmation:
             return order.confirmation
 
@@ -161,15 +180,6 @@ def handle_settle(
                 order.fulfillment_error = None
             order.fulfillment_status = "fulfilling"
 
-    # A signed-in human wallet is the order owner, but never the payer. The
-    # agent's configured wallet still signs and sends the USDC transfer.
-    buyer_wallet = identity_wallet
-    if not buyer_wallet:
-        try:
-            buyer_wallet = service_clients.payments_wallets().get("buyer", "")
-        except Exception:  # noqa: BLE001
-            buyer_wallet = ""
-
     try:
         result = tools.record_order(
             order_ref=req.orderRef,
@@ -177,7 +187,7 @@ def handle_settle(
             sku=order.sku,
             title=order.title,
             amount=order.amount,
-            buyer_address=buyer_wallet,
+            buyer_address=order.buyer_wallet,
             ship_to=order.ship_to,
             payment_reference=order.reference,
             tx_signature=order.paid_tx_signature or req.txSignature,

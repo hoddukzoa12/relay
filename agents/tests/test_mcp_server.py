@@ -6,7 +6,11 @@ from agentic_broker.mcp import server
 
 
 def test_mcp_transport_fails_closed_without_api_key() -> None:
-    client = TestClient(server.create_app(api_key="", cors_origins=""))
+    client = TestClient(
+        server.create_app(
+            api_key="", cors_origins="", oauth_enabled=False
+        )
+    )
     try:
         health = client.get("/health")
         response = client.post(
@@ -33,7 +37,11 @@ def test_mcp_transport_fails_closed_without_api_key() -> None:
 
 
 def test_mcp_transport_rejects_missing_or_wrong_api_key() -> None:
-    app = server.create_app(api_key="unit-test-secret", cors_origins="")
+    app = server.create_app(
+        api_key="unit-test-secret",
+        cors_origins="",
+        oauth_enabled=False,
+    )
     client = TestClient(app)
     try:
         health = client.get("/health")
@@ -49,11 +57,18 @@ def test_mcp_transport_rejects_missing_or_wrong_api_key() -> None:
     assert health.json()["ok"] is True
     assert missing.status_code == 401
     assert wrong.status_code == 401
-    assert missing.headers["www-authenticate"] == 'RelayApiKey realm="relay-mcp"'
+    assert (
+        missing.headers["www-authenticate"]
+        == 'RelayApiKey realm="relay-mcp"'
+    )
 
 
 def test_mcp_transport_rejects_unapproved_host_after_authentication() -> None:
-    app = server.create_app(api_key="unit-test-secret", cors_origins="")
+    app = server.create_app(
+        api_key="unit-test-secret",
+        cors_origins="",
+        oauth_enabled=False,
+    )
     with TestClient(app) as client:
         response = client.post(
             "/mcp",
@@ -71,8 +86,8 @@ def test_mcp_tools_are_thin_service_wrappers(monkeypatch) -> None:
     calls: list[tuple[str, tuple[object, ...]]] = []
 
     def result(name: str):
-        def fake(*args):
-            calls.append((name, args))
+        def fake(*args, **kwargs):
+            calls.append((name, (*args, kwargs)))
             return {"tool": name}
 
         return fake
@@ -84,9 +99,7 @@ def test_mcp_tools_are_thin_service_wrappers(monkeypatch) -> None:
     monkeypatch.setattr(
         server.buyer_tools, "authorize_payment", result("authorize_payment")
     )
-    monkeypatch.setattr(
-        server.buyer_tools, "confirm_settlement", result("settle")
-    )
+    monkeypatch.setattr(server.service_clients, "a2a_settle", result("settle"))
     monkeypatch.setattr(
         server.service_clients, "shopping_order", result("get_order_status")
     )
@@ -110,13 +123,23 @@ def test_mcp_tools_are_thin_service_wrappers(monkeypatch) -> None:
     assert server.wallet_balances() == {"tool": "wallet_balances"}
 
     assert calls == [
-        ("search_products", ("earbuds", 5)),
-        ("request_quote", ("earbuds", 5.0, "Seoul")),
-        ("authorize_payment", ("merchant", "3.45", "reference")),
-        ("settle", ("ord_1", "reference", "signature")),
-        ("get_order_status", ("ord_1",)),
-        ("refund_order", ("ord_1",)),
-        ("wallet_balances", ()),
+        ("search_products", ("earbuds", 5, {})),
+        ("request_quote", ("earbuds", 5.0, "Seoul", {})),
+        ("authorize_payment", ("merchant", "3.45", "reference", {})),
+        (
+            "settle",
+            (
+                {
+                    "orderRef": "ord_1",
+                    "reference": "reference",
+                    "txSignature": "signature",
+                },
+                {"identity_wallet": None},
+            ),
+        ),
+        ("get_order_status", ("ord_1", {})),
+        ("refund_order", ("ord_1", {})),
+        ("wallet_balances", ({},)),
     ]
 
 
