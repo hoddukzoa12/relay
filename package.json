@@ -15,6 +15,7 @@
     "seed:catalog": "pnpm --filter @arb/commerce exec tsx ../../scripts/seed-shopify-catalog.mjs",
     "build": "pnpm -r build",
     "typecheck": "pnpm -r typecheck",
+    "theme:chat": "pnpm --filter @arb/commerce exec tsx ../../scripts/sync-shopify-chat-theme.mjs",
     "compose:up": "docker compose -f infra/docker-compose.yml up --build",
     "compose:down": "docker compose -f infra/docker-compose.yml down"
   },
