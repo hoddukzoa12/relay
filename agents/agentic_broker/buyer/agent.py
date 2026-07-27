@@ -19,6 +19,7 @@ from . import tools as buyer_tools
 
 CHAT_REQUEST_STATE = "relay:chat_request"
 CHAT_IDENTITY_WALLET_STATE = "relay:chat_identity_wallet"
+CHAT_IDENTITY_EMAIL_STATE = "relay:chat_identity_email"
 CHAT_APPROVAL_SIGNATURE_STATE = "relay:chat_approval_tx_signature"
 
 INSTRUCTION = """\
@@ -189,7 +190,10 @@ def request_quote(
     # Re-establish the storefront context in the ADK tool thread.  This keeps
     # the delegation proof check local to the call that can issue a quote.
     with buyer_tools.storefront_context(
-        identity_wallet, approval_signature
+        identity_wallet,
+        approval_signature,
+        str(tool_context.state.get(CHAT_IDENTITY_EMAIL_STATE, "")).strip()
+        or None,
     ):
         quote = buyer_tools.request_quote(
             query,
@@ -280,6 +284,11 @@ def confirm_settlement(
         reference,
         tx_signature,
         mandates,
+        human_customer=True,
+        customer_email=(
+            str(tool_context.state.get(CHAT_IDENTITY_EMAIL_STATE, "")).strip()
+            or None
+        ),
     )
     tool_context.state["relay:last_confirmation"] = confirmation
     return confirmation

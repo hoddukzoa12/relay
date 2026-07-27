@@ -153,6 +153,14 @@ class SupplierOrder(BaseModel):
     message: str = Field(min_length=1)
 
 
+class CustomerAssociation(BaseModel):
+    """Shopify customer-link result for an authenticated human purchase."""
+
+    status: Literal["linked", "unlinked"]
+    customerId: Optional[str] = Field(default=None, min_length=1)
+    message: str = Field(min_length=1)
+
+
 class CatalogProductsResponse(BaseModel):
     products: list[CatalogProduct]
 
@@ -401,6 +409,7 @@ class OrderConfirmation(BaseModel):
     supplierOrder: SupplierOrder = Field(
         default_factory=_disabled_supplier_order
     )
+    customerAssociation: Optional[CustomerAssociation] = None
 
 
 class VerificationResult(BaseModel):

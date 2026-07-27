@@ -23,6 +23,8 @@ def buy(
     *,
     intent_mandate: IntentMandate | None = None,
     identity_wallet: str | None = None,
+    identity_email: str | None = None,
+    human_customer: bool = False,
     shipping_address: StructuredShippingAddress | None = None,
 ) -> dict[str, Any]:
     if shipping_address:
@@ -65,6 +67,8 @@ def buy(
         quote["reference"],
         payment["txSignature"],
         settlement_mandates,
+        human_customer=human_customer,
+        customer_email=identity_email,
     )
 
     return {
@@ -94,6 +98,8 @@ def buy_from_text(
     text: str,
     *,
     identity_wallet: str | None = None,
+    identity_email: str | None = None,
+    human_customer: bool = False,
     shipping_address: StructuredShippingAddress | None = None,
 ) -> dict[str, Any]:
     """Parse a natural-language instruction, then run the purchase."""
@@ -103,5 +109,7 @@ def buy_from_text(
         intent["budget"],
         intent["shipTo"],
         identity_wallet=identity_wallet,
+        identity_email=identity_email,
+        human_customer=human_customer,
         shipping_address=shipping_address,
     )

@@ -210,7 +210,13 @@ def _handle_intent(message: dict[str, Any], data: dict[str, Any]) -> dict[str, A
     )
 
 
-def _handle_payment(message: dict[str, Any], data: dict[str, Any]) -> dict[str, Any]:
+def _handle_payment(
+    message: dict[str, Any],
+    data: dict[str, Any],
+    *,
+    human_customer: bool = False,
+    customer_email: str | None = None,
+) -> dict[str, Any]:
     payment = PaymentMandate(**data[PAYMENT_MANDATE_DATA_KEY])
     settlement = SettlementRequest(**data[_SETTLEMENT_REQUEST_DATA_KEY])
     verification = service_clients.payments_verify_mandate(
@@ -244,6 +250,8 @@ def _handle_payment(message: dict[str, Any], data: dict[str, Any]) -> dict[str, 
     confirmation = broker.handle_settle(
         settlement,
         identity_wallet=expected.get("identity_wallet"),
+        human_customer=human_customer,
+        customer_email=customer_email if human_customer else None,
     )
     return _task(
         message,
@@ -277,7 +285,11 @@ def _handle_legacy_settle(
 
 
 @app.post("/a2a")
-def a2a_jsonrpc(request: dict[str, Any]) -> dict[str, Any]:
+def a2a_jsonrpc(
+    request: dict[str, Any],
+    x_relay_human_customer: str | None = Header(default=None),
+    x_relay_authenticated_customer_email: str | None = Header(default=None),
+) -> dict[str, Any]:
     """A2A v0.3 JSON-RPC transport; legacy REST routes remain below."""
     request_id = request.get("id")
     if request.get("jsonrpc") != "2.0":
@@ -310,7 +322,17 @@ def a2a_jsonrpc(request: dict[str, Any]) -> dict[str, Any]:
             PAYMENT_MANDATE_DATA_KEY in data
             and _SETTLEMENT_REQUEST_DATA_KEY in data
         ):
-            result = _handle_payment(message, data)
+            human_customer = x_relay_human_customer == "true"
+            result = _handle_payment(
+                message,
+                data,
+                human_customer=human_customer,
+                customer_email=(
+                    x_relay_authenticated_customer_email
+                    if human_customer
+                    else None
+                ),
+            )
         elif _PURCHASE_INTENT_DATA_KEY in data:
             result = _handle_legacy_quote(
                 message, data[_PURCHASE_INTENT_DATA_KEY]
@@ -347,6 +369,8 @@ def quote(intent: PurchaseIntent) -> PaymentRequest:
 def settle(
     req: SettlementRequest,
     x_relay_authenticated_wallet: str | None = Header(default=None),
+    x_relay_human_customer: str | None = Header(default=None),
+    x_relay_authenticated_customer_email: str | None = Header(default=None),
 ) -> OrderConfirmation:
     try:
         # This header is accepted only on the private Cloud Run service path.
@@ -356,6 +380,12 @@ def settle(
         return broker.handle_settle(
             req,
             identity_wallet=x_relay_authenticated_wallet,
+            human_customer=x_relay_human_customer == "true",
+            customer_email=(
+                x_relay_authenticated_customer_email
+                if x_relay_human_customer == "true"
+                else None
+            ),
         )
     except broker.OrderRecordingPendingError as exc:
         raise HTTPException(status_code=503, detail=str(exc)) from exc

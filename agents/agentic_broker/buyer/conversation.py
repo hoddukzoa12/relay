@@ -21,6 +21,7 @@ from . import flow
 from . import tools as buyer_tools
 from .agent import (
     CHAT_APPROVAL_SIGNATURE_STATE,
+    CHAT_IDENTITY_EMAIL_STATE,
     CHAT_IDENTITY_WALLET_STATE,
     CHAT_REQUEST_STATE,
     payment_gate_response,
@@ -113,13 +114,16 @@ class ConversationService:
         message: str,
         *,
         identity_wallet: str | None = None,
+        identity_email: str | None = None,
         approval_tx_signature: str | None = None,
     ) -> dict[str, Any]:
         """Return model text plus structured products/payment progress."""
         with (
             self._session_lock(session_id),
             buyer_tools.storefront_context(
-                identity_wallet, approval_tx_signature
+                identity_wallet,
+                approval_tx_signature,
+                identity_email,
             ),
         ):
             if not settings.google_api_key:
@@ -128,6 +132,7 @@ class ConversationService:
                     message,
                     reason="GOOGLE_API_KEY is not configured",
                     identity_wallet=identity_wallet,
+                    identity_email=identity_email,
                     approval_tx_signature=approval_tx_signature,
                 )
             try:
@@ -135,6 +140,7 @@ class ConversationService:
                     session_id,
                     message,
                     identity_wallet=identity_wallet,
+                    identity_email=identity_email,
                     approval_tx_signature=approval_tx_signature,
                 )
                 if not trace.reply:
@@ -160,6 +166,7 @@ class ConversationService:
                     message,
                     reason=str(exc.cause),
                     identity_wallet=identity_wallet,
+                    identity_email=identity_email,
                     approval_tx_signature=approval_tx_signature,
                 )
             except Exception as exc:  # noqa: BLE001
@@ -169,6 +176,7 @@ class ConversationService:
                     message,
                     reason=str(exc),
                     identity_wallet=identity_wallet,
+                    identity_email=identity_email,
                     approval_tx_signature=approval_tx_signature,
                 )
 
@@ -182,6 +190,7 @@ class ConversationService:
         message: str,
         *,
         identity_wallet: str | None,
+        identity_email: str | None,
         approval_tx_signature: str | None,
     ) -> TurnTrace:
         trace = TurnTrace()
@@ -201,6 +210,7 @@ class ConversationService:
                     # state when an anonymous caller reuses a session ID.
                     CHAT_REQUEST_STATE: True,
                     CHAT_IDENTITY_WALLET_STATE: identity_wallet or "",
+                    CHAT_IDENTITY_EMAIL_STATE: identity_email or "",
                     CHAT_APPROVAL_SIGNATURE_STATE: (
                         approval_tx_signature or ""
                     ),
@@ -413,6 +423,7 @@ class ConversationService:
         *,
         reason: str,
         identity_wallet: str | None,
+        identity_email: str | None,
         approval_tx_signature: str | None,
     ) -> dict[str, Any]:
         state = self._fallback_states.setdefault(session_id, _FallbackState())
@@ -477,6 +488,8 @@ class ConversationService:
                     budget=state.budget,
                     ship_to=ship_to,
                     identity_wallet=identity_wallet,
+                    identity_email=identity_email,
+                    human_customer=identity_wallet is not None,
                     shipping_address=state.shipping_address,
                 )
             except PermissionError as exc:
@@ -682,6 +695,7 @@ def respond(
     message: str,
     *,
     identity_wallet: str | None = None,
+    identity_email: str | None = None,
     approval_tx_signature: str | None = None,
 ) -> dict[str, Any]:
     """Process one chat turn through the process-wide conversation service."""
@@ -689,5 +703,6 @@ def respond(
         session_id,
         message,
         identity_wallet=identity_wallet,
+        identity_email=identity_email,
         approval_tx_signature=approval_tx_signature,
     )

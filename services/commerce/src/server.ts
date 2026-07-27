@@ -116,6 +116,9 @@ const OrderSchema = z.object({
   explorer: z.string(),
   supplierCost: SupplierCostSnapshotSchema.nullish(),
   shippingAddress: StructuredShippingAddressSchema.nullish(),
+  // Internal-only value populated from the buyer service's verified Clerk
+  // identity. Public buyer request models expose no email or customer ID.
+  customerEmail: z.string().trim().email().nullable().optional(),
 });
 
 app.post(

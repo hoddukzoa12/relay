@@ -49,8 +49,6 @@ def source_and_price(query: str, budget_amount: float) -> dict[str, Any]:
 
     def safe_candidates(
         products: list[CatalogProduct | dict[str, Any]],
-        *,
-        require_relevance: bool,
     ) -> list[dict[str, Any]]:
         candidates: list[dict[str, Any]] = []
         for catalog_product in products:
@@ -59,8 +57,6 @@ def source_and_price(query: str, budget_amount: float) -> dict[str, Any]:
                 if isinstance(catalog_product, CatalogProduct)
                 else catalog_product
             )
-            if require_relevance and llm.catalog_relevance(product, query) <= 0:
-                continue
             try:
                 inventory = int(product["inventoryQuantity"])
                 supplier_cost = product["supplierCost"]
@@ -95,7 +91,18 @@ def source_and_price(query: str, budget_amount: float) -> dict[str, Any]:
             )
         return candidates
 
-    candidates = safe_candidates(catalog.products, require_relevance=True)
+    eligible = safe_candidates(catalog.products)
+    candidates = [
+        product
+        for product in eligible
+        if llm.catalog_satisfies_query(product, query)
+    ]
+    partial_candidates = [
+        product
+        for product in eligible
+        if llm.catalog_relevance(product, query) > 0
+        and not llm.catalog_satisfies_query(product, query)
+    ]
     sourcing: dict[str, Any] | None = None
     if not candidates:
         try:
@@ -118,25 +125,45 @@ def source_and_price(query: str, budget_amount: float) -> dict[str, Any]:
                     None,
                 )
             if isinstance(sourced_product, dict):
-                candidates = safe_candidates(
-                    [sourced_product],
-                    require_relevance=False,
-                )
+                sourced_candidates = safe_candidates([sourced_product])
+                candidates = [
+                    product
+                    for product in sourced_candidates
+                    if llm.catalog_satisfies_query(product, query)
+                ]
         except dsers_sourcing.DSersSourcingUnavailable as exc:
+            partial_detail = (
+                " Partial catalog results exist, but they match only part of "
+                "the query and were not treated as complete matches: "
+                + ", ".join(
+                    repr(product["title"]) for product in partial_candidates[:3]
+                )
+                + "."
+                if partial_candidates
+                else ""
+            )
             raise ValueError(
                 f"no suitable in-stock catalog product matches {query!r} "
                 f"within {budget_amount:.2f} USDC; new DSers sourcing is "
                 f"currently unavailable ({exc}). Existing catalog products "
-                "and autonomous USDC checkout remain available."
+                f"and autonomous USDC checkout remain available.{partial_detail}"
             ) from exc
 
     if not candidates:
         detail = (
-            "DSers pushed a product, but it was not safely readable from "
-            "Shopify with positive margin"
+            "DSers pushed a product, but it did not satisfy every query term "
+            "or was not safely readable from Shopify with positive margin"
             if sourcing
             else "no matching local catalog product was available"
         )
+        if partial_candidates:
+            detail += (
+                "; partial catalog fallbacks were not treated as complete "
+                "matches: "
+                + ", ".join(
+                    repr(product["title"]) for product in partial_candidates[:3]
+                )
+            )
         raise ValueError(
             f"no suitable in-stock catalog product matches {query!r} within "
             f"{budget_amount:.2f} USDC ({detail})"
@@ -154,6 +181,7 @@ def source_and_price(query: str, budget_amount: float) -> dict[str, Any]:
         "price": offer["salePrice"],
         "inventoryQuantity": offer["inventoryQuantity"],
         "overBudget": False,
+        "matchStatus": "complete",
         **({"externalSourcing": sourcing} if sourcing else {}),
     }
 
@@ -191,28 +219,33 @@ def record_order(
     explorer: str,
     supplier_cost: dict[str, Any] | None = None,
     shipping_address: dict[str, Any] | None = None,
+    human_customer: bool = False,
+    customer_email: str | None = None,
 ) -> dict[str, Any]:
     """Record the paid order in Shopify (orderCreate + orderMarkAsPaid).
 
     Returns Shopify ledger identity plus the explicit supplier-order state.
     """
-    return service_clients.commerce_create_order(
-        {
-            "orderRef": order_ref,
-            "productId": product_id,
-            "variantId": product_id,
-            "sku": sku,
-            "title": title,
-            "amount": amount,
-            "buyerAddress": buyer_address,
-            "shipTo": ship_to,
-            "paymentReference": payment_reference,
-            "txSignature": tx_signature,
-            "explorer": explorer,
-            "supplierCost": supplier_cost,
-            "shippingAddress": shipping_address,
-        }
-    )
+    payload = {
+        "orderRef": order_ref,
+        "productId": product_id,
+        "variantId": product_id,
+        "sku": sku,
+        "title": title,
+        "amount": amount,
+        "buyerAddress": buyer_address,
+        "shipTo": ship_to,
+        "paymentReference": payment_reference,
+        "txSignature": tx_signature,
+        "explorer": explorer,
+        "supplierCost": supplier_cost,
+        "shippingAddress": shipping_address,
+    }
+    if human_customer:
+        # Presence (including null) distinguishes an authenticated human whose
+        # Clerk record has no email from agent-only paths with no customer.
+        payload["customerEmail"] = customer_email
+    return service_clients.commerce_create_order(payload)
 
 
 def get_order_status(identifier: str) -> dict[str, Any]:

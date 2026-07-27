@@ -53,6 +53,7 @@ def test_chat_endpoint_preserves_caller_session_id() -> None:
         "session_12345678",
         "I need earbuds",
         identity_wallet=None,
+        identity_email=None,
         approval_tx_signature=None,
     )
 
@@ -60,7 +61,10 @@ def test_chat_endpoint_preserves_caller_session_id() -> None:
 def test_chat_validates_bearer_before_trusting_its_wallet() -> None:
     client = TestClient(server.app)
     identity = server.auth.ClerkIdentity(
-        "user_test", "session_test", USER_WALLET
+        "user_test",
+        "session_test",
+        USER_WALLET,
+        "verified@example.com",
     )
     expected = {
         "sessionId": "verified_12345678",
@@ -93,6 +97,7 @@ def test_chat_validates_bearer_before_trusting_its_wallet() -> None:
         "verified_12345678",
         "Find earbuds",
         identity_wallet=USER_WALLET,
+        identity_email="verified@example.com",
         approval_tx_signature="approve-tx",
     )
 
@@ -297,6 +302,7 @@ def test_runner_state_clears_identity_for_every_anonymous_turn() -> None:
         "anonymous_state",
         "buy it",
         identity_wallet=None,
+        identity_email=None,
         approval_tx_signature=None,
     )
 
@@ -304,6 +310,7 @@ def test_runner_state_clears_identity_for_every_anonymous_turn() -> None:
     assert captured["state_delta"] == {
         "relay:chat_request": True,
         "relay:chat_identity_wallet": "",
+        "relay:chat_identity_email": "",
         "relay:chat_approval_tx_signature": "",
     }
 
