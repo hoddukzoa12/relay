@@ -63,142 +63,261 @@
 
       .shell {
         display: grid;
-        grid-template-columns: minmax(0, 1fr);
+        grid-template-areas: "showcase chat";
+        grid-template-columns: minmax(0, .96fr) minmax(0, 1.04fr);
         min-height: min(900px, calc(100vh - 70px));
         border-top: 1px solid var(--relay-rule);
         border-bottom: 1px solid var(--relay-rule);
       }
 
-      .editorial {
-        display: flex;
-        flex-direction: column;
-        justify-content: space-between;
-        min-width: 0;
-        padding: clamp(28px, 5vw, 72px);
-        border-right: 1px solid var(--relay-rule);
-      }
-
-      .eyebrow, .message-label, .state, .proof-kicker, .catalog-meta,
-      .identity-name, .wallet-state, .step-number, .composer-note {
-        font: 650 10px/1.25 ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
-        letter-spacing: .09em;
-        text-transform: uppercase;
-      }
-
-      .eyebrow {
-        margin: 0 0 clamp(32px, 7vw, 90px);
-        color: var(--relay-accent);
-      }
-
-      h1 {
-        max-width: 620px;
-        margin: 0;
-        font-size: clamp(42px, 6.5vw, 94px);
-        font-weight: 520;
-        line-height: .91;
-        letter-spacing: -.065em;
-      }
-
-      .intro {
-        max-width: 520px;
-        margin: 28px 0 0;
-        color: var(--relay-muted);
-        font-size: clamp(14px, 1.7vw, 18px);
-      }
-
-      .rail-foot {
-        display: grid;
-        gap: 14px;
-        margin-top: 48px;
-      }
-
-      .rail-rule {
-        display: grid;
-        grid-template-columns: 34px 1fr;
-        gap: 10px;
-        align-items: baseline;
-        padding-top: 12px;
-        border-top: 1px solid var(--relay-rule);
-        color: var(--relay-muted);
-        font-size: 12px;
-      }
-
-      .rail-rule strong {
-        color: var(--relay-ink);
-        font: 650 10px/1.25 ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
-      }
-
       .chat {
         display: grid;
-        grid-template-rows: auto minmax(360px, 1fr) auto;
+        grid-area: chat;
+        grid-template-rows: minmax(360px, 1fr) auto;
         min-width: 0;
         max-height: min(900px, calc(100vh - 70px));
         background: var(--relay-paper);
       }
 
-      .chat-head {
-        display: flex;
-        align-items: center;
-        justify-content: space-between;
-        flex-wrap: wrap;
-        gap: 18px;
-        min-height: 66px;
-        padding: 16px clamp(20px, 3.2vw, 44px);
-        border-bottom: 1px solid var(--relay-rule);
+      .showcase {
+        display: grid;
+        grid-area: showcase;
+        grid-template-rows: minmax(0, 1fr) auto;
+        min-width: 0;
+        min-height: 0;
+        overflow: hidden;
+        border-right: 1px solid var(--relay-rule);
+        background: var(--relay-bg);
       }
 
-      .chat-title { font-weight: 570; letter-spacing: -.02em; }
-      .identity-name { color: var(--relay-ink); }
-      .wallet-state { color: var(--relay-accent); text-align: right; }
-      .wallet-state.error { color: var(--relay-muted); }
-      .identity {
-        display: flex;
-        align-items: center;
-        justify-content: flex-end;
-        flex-wrap: wrap;
-        gap: 7px;
+      .showcase-viewport {
+        position: relative;
+        min-height: 0;
+        overflow: hidden;
       }
-      .identity button, .identity input {
-        min-height: 32px;
-        border: 1px solid var(--relay-rule);
-        border-radius: 0;
-        background: transparent;
+
+      .showcase-slides,
+      .showcase-slide {
+        width: 100%;
+        height: 100%;
+      }
+
+      .showcase-slide {
+        display: grid;
+        grid-template-rows: minmax(260px, 1.15fr) minmax(240px, .85fr);
+      }
+
+      .showcase-slide[hidden] { display: none; }
+
+      .showcase-image {
+        position: relative;
+        min-height: 0;
+        overflow: hidden;
+        border-bottom: 1px solid var(--relay-rule);
+        background: var(--relay-soft);
+      }
+
+      .showcase-image img {
+        display: block;
+        width: 100%;
+        height: 100%;
+        object-fit: cover;
+      }
+
+      .showcase-badge {
+        position: absolute;
+        top: 18px;
+        left: 18px;
+        padding: 7px 9px;
+        background: rgba(251, 250, 246, .94);
         color: var(--relay-ink);
-        font-size: 11px;
       }
-      .identity button {
-        padding: 6px 10px;
-        cursor: pointer;
-      }
-      .identity button:hover:not(:disabled) {
-        border-color: var(--relay-accent);
-        color: var(--relay-accent);
-      }
-      .identity button:disabled { cursor: not-allowed; opacity: .45; }
-      .identity input {
-        width: 68px;
-        padding: 6px 8px;
-      }
-      .identity-limit {
+
+      .showcase-copy {
         display: flex;
-        align-items: center;
-        gap: 5px;
-        color: var(--relay-muted);
-        font: 600 9px/1.2 ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
-        letter-spacing: .05em;
+        min-height: 0;
+        flex-direction: column;
+        padding: clamp(24px, 4vw, 48px);
+      }
+
+      .showcase-kicker,
+      .showcase-badge,
+      .showcase-status,
+      .message-label,
+      .state,
+      .proof-kicker,
+      .catalog-meta,
+      .step-number,
+      .inline-kicker {
+        font: 650 10px/1.25 ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+        letter-spacing: .09em;
         text-transform: uppercase;
       }
 
+      .showcase-kicker {
+        display: block;
+        margin-bottom: 18px;
+        color: var(--relay-accent);
+      }
+
+      .showcase-copy h2 {
+        max-width: 620px;
+        margin: 0;
+        font-size: clamp(34px, 4vw, 64px);
+        font-weight: 520;
+        line-height: .98;
+        letter-spacing: -.05em;
+      }
+
+      .showcase-copy > p {
+        max-width: 520px;
+        margin: 18px 0 0;
+        color: var(--relay-muted);
+        font-size: clamp(13px, 1.3vw, 17px);
+      }
+
+      .showcase-facts {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        gap: 18px;
+        margin-top: auto;
+        padding-top: 22px;
+        border-top: 1px solid var(--relay-rule);
+      }
+
+      .showcase-facts strong {
+        font: 650 14px/1.25 ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+      }
+
+      .showcase-facts span {
+        color: var(--relay-muted);
+        font-size: 11px;
+        text-align: right;
+      }
+
+      .showcase-link {
+        width: fit-content;
+        margin-top: 18px;
+        color: var(--relay-ink);
+        font-size: 12px;
+        text-underline-offset: 4px;
+      }
+
+      .protocol-visual {
+        display: grid;
+        grid-template-columns: 1fr auto 1fr auto 1fr;
+        align-items: center;
+        gap: clamp(8px, 2vw, 24px);
+        height: 100%;
+        padding: clamp(28px, 5vw, 64px);
+        color: var(--relay-paper);
+        background: var(--relay-ink);
+      }
+
+      .protocol-node {
+        display: grid;
+        place-items: center;
+        min-width: 0;
+        aspect-ratio: 1;
+        border: 1px solid #81817b;
+        border-radius: 50%;
+        font: 650 clamp(9px, 1vw, 12px)/1.25 ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+        letter-spacing: .08em;
+        text-align: center;
+        text-transform: uppercase;
+      }
+
+      .protocol-node.accent {
+        border-color: #9fb1ef;
+        color: #b8c5f5;
+      }
+
+      .protocol-arrow {
+        color: #9b9b93;
+        font-size: clamp(18px, 3vw, 34px);
+      }
+
+      .relay-visual {
+        position: relative;
+        display: grid;
+        place-items: center;
+        height: 100%;
+        overflow: hidden;
+        color: var(--relay-paper);
+        background: var(--relay-accent);
+      }
+
+      .relay-visual::before,
+      .relay-visual::after {
+        position: absolute;
+        width: 68%;
+        aspect-ratio: 1;
+        border: 1px solid rgba(255, 255, 255, .4);
+        border-radius: 50%;
+        content: "";
+      }
+
+      .relay-visual::after {
+        width: 42%;
+        border-color: rgba(255, 255, 255, .65);
+      }
+
+      .relay-mark {
+        z-index: 1;
+        font-size: clamp(64px, 11vw, 150px);
+        font-weight: 500;
+        letter-spacing: -.075em;
+      }
+
+      .showcase-controls {
+        display: grid;
+        grid-template-columns: auto 1fr auto;
+        align-items: center;
+        min-height: 58px;
+        border-top: 1px solid var(--relay-rule);
+      }
+
+      .showcase-controls button {
+        width: 58px;
+        height: 58px;
+        padding: 0;
+        border: 0;
+        border-radius: 0;
+        background: transparent;
+        color: var(--relay-ink);
+        cursor: pointer;
+        font-size: 22px;
+      }
+
+      .showcase-controls button:first-child {
+        border-right: 1px solid var(--relay-rule);
+      }
+
+      .showcase-controls button:last-child {
+        border-left: 1px solid var(--relay-rule);
+      }
+
+      .showcase-controls button:hover:not(:disabled) {
+        color: var(--relay-accent);
+      }
+
+      .showcase-status {
+        color: var(--relay-muted);
+        text-align: center;
+      }
+
       .messages {
+        min-height: 0;
         overflow: auto;
-        padding: clamp(24px, 4vw, 50px) clamp(20px, 4vw, 56px);
+        padding: clamp(28px, 4vw, 54px) clamp(18px, 3.2vw, 44px);
         scroll-behavior: smooth;
       }
 
       .message {
         display: grid;
-        grid-template-columns: 78px minmax(0, 1fr);
-        gap: 16px;
+        grid-template-columns: 62px minmax(0, 1fr);
+        gap: 13px;
         max-width: 900px;
         margin: 0 0 34px;
       }
@@ -225,7 +344,7 @@
 
       .cards {
         display: grid;
-        grid-template-columns: repeat(3, minmax(0, 1fr));
+        grid-template-columns: repeat(2, minmax(0, 1fr));
         gap: 10px;
         margin-top: 18px;
       }
@@ -346,6 +465,80 @@
 
       .delegate .primary { flex: 0 0 auto; }
 
+      .inline-actions {
+        display: grid;
+        gap: 13px;
+        margin-top: 18px;
+        padding: 16px;
+        border: 1px solid var(--relay-rule);
+        background: var(--relay-bg);
+      }
+
+      .inline-kicker {
+        color: var(--relay-accent);
+      }
+
+      .inline-note {
+        margin: 0;
+        color: var(--relay-muted);
+        font-size: 12px;
+      }
+
+      .inline-action-row {
+        display: flex;
+        align-items: end;
+        flex-wrap: wrap;
+        gap: 10px;
+      }
+
+      .inline-limit {
+        display: grid;
+        gap: 5px;
+        color: var(--relay-muted);
+        font: 600 9px/1.2 ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+        letter-spacing: .05em;
+        text-transform: uppercase;
+      }
+
+      .inline-limit input {
+        width: 104px;
+        min-height: 42px;
+        padding: 8px 10px;
+        border: 1px solid var(--relay-rule);
+        border-radius: 0;
+        background: var(--relay-paper);
+        color: var(--relay-ink);
+      }
+
+      .inline-delegation-status {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        flex-wrap: wrap;
+        gap: 10px;
+        margin-top: 12px;
+        padding-top: 10px;
+        border-top: 1px solid var(--relay-rule);
+        color: var(--relay-muted);
+        font: 500 9px/1.35 ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+        letter-spacing: .04em;
+        text-transform: uppercase;
+      }
+
+      .quiet-action {
+        padding: 3px 0;
+        border: 0;
+        border-bottom: 1px solid currentColor;
+        border-radius: 0;
+        background: transparent;
+        color: var(--relay-muted);
+        cursor: pointer;
+        font-size: 9px;
+        text-transform: uppercase;
+      }
+
+      .quiet-action:hover:not(:disabled) { color: var(--relay-accent); }
+
       .progress {
         margin-top: 18px;
         border: 1px solid var(--relay-rule);
@@ -449,22 +642,22 @@
 
       @media (max-width: 980px) {
         :host, .shell { min-height: auto; }
-        .shell { grid-template-columns: 1fr; }
-        .editorial {
-          min-height: auto;
-          padding: 38px 24px 34px;
-          border-right: 0;
-          border-bottom: 1px solid var(--relay-rule);
+        .shell {
+          grid-template-areas:
+            "chat"
+            "showcase";
+          grid-template-columns: minmax(0, 1fr);
         }
-        .eyebrow { margin-bottom: 30px; }
-        h1 { max-width: 800px; font-size: clamp(42px, 12vw, 80px); }
-        .rail-foot { grid-template-columns: repeat(3, 1fr); margin-top: 34px; }
-        .chat { max-height: none; }
-        .messages { min-height: 480px; max-height: 70vh; }
+        .chat { min-height: 72vh; max-height: none; }
+        .messages { min-height: 480px; }
+        .showcase {
+          min-height: 680px;
+          border-top: 1px solid var(--relay-rule);
+          border-right: 0;
+        }
       }
 
       @media (max-width: 720px) {
-        .rail-foot { grid-template-columns: 1fr; gap: 6px; }
         .message { grid-template-columns: 56px minmax(0, 1fr); gap: 10px; }
         .cards { grid-template-columns: 1fr; }
         .card { display: grid; grid-template-columns: 116px minmax(0, 1fr); }
@@ -473,6 +666,14 @@
         .step-value { grid-column: 2; max-width: none; text-align: left; }
         .delegate { align-items: stretch; flex-direction: column; }
         .composer { padding-inline: 16px; }
+        .showcase { min-height: 620px; }
+        .showcase-slide { grid-template-rows: minmax(250px, 1fr) auto; }
+        .showcase-copy { padding: 28px 22px; }
+        .showcase-copy h2 { font-size: clamp(32px, 11vw, 48px); }
+        .protocol-visual { padding: 28px 18px; }
+        .protocol-node { font-size: 8px; }
+        .inline-action-row { align-items: stretch; flex-direction: column; }
+        .inline-limit input { width: 100%; }
       }
 
       @media (prefers-reduced-motion: reduce) {
@@ -483,21 +684,6 @@
 
     <main class="shell">
       <section class="chat" aria-label="Relay shopping chat">
-        <header class="chat-head">
-          <span class="chat-title">Shopping conversation</span>
-          <div class="identity">
-            <span class="identity-name" id="identity-name" hidden></span>
-            <span class="wallet-state" id="wallet-state">[ CHECKING AGENT ]</span>
-            <label class="identity-limit" id="limit-field" hidden>
-              Limit
-              <input id="delegation-limit" inputmode="decimal" value="50" aria-label="USDC delegation limit">
-              USDC
-            </label>
-            <button id="approve" type="button" disabled hidden>Approve once</button>
-            <button id="revoke" type="button" disabled hidden>Revoke</button>
-            <button id="auth" type="button">Sign in with Shopify</button>
-          </div>
-        </header>
         <div class="messages" id="messages" role="log" aria-live="polite" aria-relevant="additions"></div>
         <footer class="composer">
           <form id="composer">
@@ -513,6 +699,23 @@
           </form>
         </footer>
       </section>
+      <aside class="showcase" aria-label="Relay live catalog and project">
+        <div
+          class="showcase-viewport"
+          id="showcase-viewport"
+          role="region"
+          aria-roledescription="carousel"
+          aria-label="Live catalog, MCP, and Relay overview"
+          tabindex="0"
+        >
+          <div class="showcase-slides" id="showcase-slides"></div>
+        </div>
+        <nav class="showcase-controls" aria-label="Showcase controls">
+          <button id="showcase-prev" type="button" aria-label="Previous slide">←</button>
+          <span class="showcase-status" id="showcase-status"></span>
+          <button id="showcase-next" type="button" aria-label="Next slide">→</button>
+        </nav>
+      </aside>
     </main>
   `;
 
@@ -535,18 +738,25 @@
       this.identity = null;
       this.authBranch = "initializing";
       this.delegation = null;
+      this.authError = "";
+      this.pendingPurchase = null;
+      this.resumeInFlight = false;
+      this.activeGate = null;
+      this.showcaseIndex = 0;
+      this.showcaseTimer = null;
+      this.reducedMotion = window.matchMedia("(prefers-reduced-motion: reduce)");
       this.shopifyLoginUrl =
         (this.getAttribute("shopify-login-url") || "/customer_authentication/login").trim();
       this.sessionKey = `relay-agent-chat:${window.location.pathname}`;
       this.agentSessionKey = `relay-agent-session:${window.location.pathname}`;
+      this.pendingPurchaseKey = `relay-pending-purchase:${window.location.pathname}`;
       this.agentSessionId = this.loadAgentSessionId();
+      this.pendingPurchase = this.loadPendingPurchase();
 
       this.attachShadow({ mode: "open" }).append(view.content.cloneNode(true));
       this.$ = (selector) => this.shadowRoot.querySelector(selector);
       this.$("#composer").addEventListener("submit", (event) => this.submit(event));
-      this.$("#auth").addEventListener("click", () => this.toggleAuth());
-      this.$("#approve").addEventListener("click", () => this.approve());
-      this.$("#revoke").addEventListener("click", () => this.revoke());
+      this.initShowcase();
 
       if (!this.restoreHistory()) {
         this.appendMessage(
@@ -554,8 +764,12 @@
           "What are you looking for? Tell me your budget and shipping destination, and I’ll compare this store’s live catalog. You stay in control until you choose an item or delegate the choice.",
         );
       }
-      this.loadWallet();
       this.loadAuth();
+    }
+
+    disconnectedCallback() {
+      window.clearInterval(this.showcaseTimer);
+      this.showcaseTimer = null;
     }
 
     cleanBaseUrl(value) {
@@ -573,6 +787,182 @@
       } catch {
         return [];
       }
+    }
+
+    initShowcase() {
+      const slides = this.catalog
+        .filter((product) => product?.available && product?.image)
+        .map((product, index) => this.createProductSlide(product, index));
+      slides.push(
+        this.createInfoSlide("mcp"),
+        this.createInfoSlide("relay"),
+      );
+      const track = this.$("#showcase-slides");
+      slides.forEach((slide) => track.append(slide));
+      this.showcaseSlides = slides;
+
+      this.$("#showcase-prev").addEventListener("click", () =>
+        this.setShowcaseSlide(this.showcaseIndex - 1, { userInitiated: true }),
+      );
+      this.$("#showcase-next").addEventListener("click", () =>
+        this.setShowcaseSlide(this.showcaseIndex + 1, { userInitiated: true }),
+      );
+      const viewport = this.$("#showcase-viewport");
+      viewport.addEventListener("keydown", (event) => {
+        if (event.key !== "ArrowLeft" && event.key !== "ArrowRight") return;
+        event.preventDefault();
+        const direction = event.key === "ArrowLeft" ? -1 : 1;
+        this.setShowcaseSlide(this.showcaseIndex + direction, { userInitiated: true });
+      });
+      viewport.addEventListener("mouseenter", () => this.stopShowcase());
+      viewport.addEventListener("mouseleave", () => this.startShowcase());
+      this.$(".showcase").addEventListener("focusin", () => this.stopShowcase());
+      this.$(".showcase").addEventListener("focusout", (event) => {
+        if (!this.$(".showcase").contains(event.relatedTarget)) this.startShowcase();
+      });
+      this.reducedMotion.addEventListener?.("change", () => {
+        this.stopShowcase();
+        this.startShowcase();
+      });
+
+      this.setShowcaseSlide(0);
+      this.startShowcase();
+    }
+
+    createProductSlide(product, index) {
+      const slide = document.createElement("article");
+      slide.className = "showcase-slide";
+      slide.setAttribute("aria-roledescription", "slide");
+      slide.setAttribute("aria-label", `Live catalog product ${index + 1}`);
+
+      const media = document.createElement("div");
+      media.className = "showcase-image";
+      const image = document.createElement("img");
+      image.src = product.image;
+      image.alt = product.title || "Live catalog product";
+      image.loading = index === 0 ? "eager" : "lazy";
+      image.decoding = "async";
+      image.addEventListener("error", () => {
+        const slideIndex = this.showcaseSlides?.indexOf(slide);
+        slide.remove();
+        if (slideIndex >= 0) {
+          this.showcaseSlides.splice(slideIndex, 1);
+          this.setShowcaseSlide(Math.min(this.showcaseIndex, this.showcaseSlides.length - 1));
+        }
+      });
+      const badge = document.createElement("span");
+      badge.className = "showcase-badge";
+      badge.textContent = "Live Shopify catalog";
+      media.append(image, badge);
+
+      const copy = document.createElement("div");
+      copy.className = "showcase-copy";
+      const kicker = document.createElement("span");
+      kicker.className = "showcase-kicker";
+      kicker.textContent = product.vendor || "Catalog";
+      const title = document.createElement("h2");
+      title.textContent = product.title || "Untitled product";
+      const description = document.createElement("p");
+      description.textContent =
+        product.description || "Search, compare, and settle this live catalog item with Relay.";
+      const facts = document.createElement("div");
+      facts.className = "showcase-facts";
+      const price = document.createElement("strong");
+      price.textContent = this.formatMoney(product);
+      const stock = document.createElement("span");
+      stock.textContent = product.available ? "Available now" : "Currently unavailable";
+      facts.append(price, stock);
+      copy.append(kicker, title, description, facts);
+      if (product.url || product.handle) {
+        const link = document.createElement("a");
+        link.className = "showcase-link";
+        link.href = product.url || `/products/${encodeURIComponent(product.handle)}`;
+        link.textContent = "View live product ↗";
+        link.setAttribute("aria-label", `View ${product.title || "catalog product"}`);
+        copy.append(link);
+      }
+      slide.append(media, copy);
+      return slide;
+    }
+
+    createInfoSlide(kind) {
+      const slide = document.createElement("article");
+      slide.className = "showcase-slide";
+      slide.setAttribute("aria-roledescription", "slide");
+      if (kind === "mcp") {
+        slide.setAttribute("aria-label", "Relay MCP overview");
+        slide.innerHTML = `
+          <div class="showcase-image protocol-visual" aria-hidden="true">
+            <span class="protocol-node">External<br>agent</span>
+            <span class="protocol-arrow">→</span>
+            <span class="protocol-node accent">Relay<br>MCP</span>
+            <span class="protocol-arrow">→</span>
+            <span class="protocol-node">USDC<br>Solana</span>
+          </div>
+          <div class="showcase-copy">
+            <span class="showcase-kicker">Model Context Protocol</span>
+            <h2>Agents can shop here, too.</h2>
+            <p>Authenticated external agents connect through Relay’s MCP adapter, source real inventory, and settle agent-to-agent without opening a human checkout.</p>
+            <div class="showcase-facts">
+              <strong>MCP + A2A</strong>
+              <span>Authenticated tools<br>On-chain verification</span>
+            </div>
+          </div>
+        `;
+      } else {
+        const heading = (this.getAttribute("heading") || "Tell it what you need.").trim();
+        const intro = (this.getAttribute("intro") ||
+          "Search the live catalog, set a budget, and let the agent settle in USDC on Solana devnet.").trim();
+        slide.setAttribute("aria-label", "About Relay");
+        slide.innerHTML = `
+          <div class="showcase-image relay-visual" aria-hidden="true">
+            <span class="relay-mark">Relay</span>
+          </div>
+          <div class="showcase-copy">
+            <span class="showcase-kicker">Agent-native commerce</span>
+            <h2></h2>
+            <p></p>
+            <div class="showcase-facts">
+              <strong>USDC · Devnet</strong>
+              <span>Autonomous signing<br>Explorer proof</span>
+            </div>
+          </div>
+        `;
+        slide.querySelector("h2").textContent = heading;
+        slide.querySelector("p").textContent = intro;
+      }
+      return slide;
+    }
+
+    setShowcaseSlide(index, options = {}) {
+      const count = this.showcaseSlides?.length || 0;
+      if (!count) return;
+      this.showcaseIndex = (index % count + count) % count;
+      this.showcaseSlides.forEach((slide, slideIndex) => {
+        const active = slideIndex === this.showcaseIndex;
+        slide.hidden = !active;
+        slide.setAttribute("aria-hidden", String(!active));
+      });
+      this.$("#showcase-status").textContent =
+        `${String(this.showcaseIndex + 1).padStart(2, "0")} / ${String(count).padStart(2, "0")}`;
+      if (options.userInitiated) {
+        this.stopShowcase();
+        this.startShowcase();
+      }
+    }
+
+    startShowcase() {
+      if (this.reducedMotion.matches || this.showcaseSlides?.length < 2 || this.showcaseTimer) {
+        return;
+      }
+      this.showcaseTimer = window.setInterval(() => {
+        if (!document.hidden) this.setShowcaseSlide(this.showcaseIndex + 1);
+      }, 6500);
+    }
+
+    stopShowcase() {
+      window.clearInterval(this.showcaseTimer);
+      this.showcaseTimer = null;
     }
 
     loadAgentSessionId() {
@@ -692,87 +1082,101 @@
         const existing = [...document.scripts].find((script) => script.src === src);
         if (existing) {
           if (window.RelayAuth) resolve();
+          else if (existing.dataset.relayAuthState === "error") {
+            existing.remove();
+          }
           else {
             existing.addEventListener("load", resolve, { once: true });
             existing.addEventListener("error", reject, { once: true });
+            return;
           }
-          return;
+          if (window.RelayAuth) return;
         }
         const script = document.createElement("script");
         script.src = src;
         script.crossOrigin = "anonymous";
-        script.onload = resolve;
-        script.onerror = () => reject(new Error("Unable to load Relay wallet identity."));
+        script.dataset.relayAuthState = "loading";
+        script.onload = () => {
+          script.dataset.relayAuthState = "loaded";
+          resolve();
+        };
+        script.onerror = () => {
+          script.dataset.relayAuthState = "error";
+          reject(new Error("Unable to load Relay wallet identity."));
+        };
         document.head.append(script);
       });
     }
 
     async loadAuth() {
-      if (!this.isConfigured()) return;
-      try {
-        await this.loadAuthScript();
-        this.authClient = window.RelayAuth.client(this.baseUrl);
-        this.authClient.subscribe((identity) => this.updateIdentity(identity));
-        const status = await this.authClient.ready;
-        this.applyAuthStatus(status);
-        if (!status.configured) {
-          this.$("#auth").disabled = true;
-          this.$("#auth").textContent = "Clerk unavailable";
-        } else if (status.fallbackRequired) {
-          this.appendMessage(
-            "agent",
-            "Shopify sign-in returned, but this browser did not expose the Clerk session. Continuing identity verification securely on this page; catalog search remains available.",
-          );
-          await this.authClient.openFallbackSignIn();
-        }
-      } catch (error) {
-        this.$("#wallet-state").textContent = `[ AUTH ERROR ]`;
-        this.$("#wallet-state").title = this.errorMessage(error);
-        this.$("#wallet-state").classList.add("error");
+      if (!this.isConfigured()) {
+        this.authError = "The buyer agent URL is not configured for this section.";
+        return null;
       }
+      if (this.authClient) return this.authClient;
+      if (this.authLoadPromise) return this.authLoadPromise;
+      this.authLoadPromise = (async () => {
+        try {
+          await this.loadAuthScript();
+          this.authClient = window.RelayAuth.client(this.baseUrl);
+          this.authClient.subscribe((identity) => this.updateIdentity(identity));
+          const status = await this.authClient.ready;
+          this.applyAuthStatus(status);
+          if (!status.configured) {
+            this.authError = "Shopify sign-in is temporarily unavailable.";
+          } else {
+            this.authError = "";
+          }
+          if (!status.sessionActive && this.pendingPurchase) {
+            this.showAuthStatusGate(
+              this.pendingPurchase.product,
+              this.pendingPurchase.options,
+              status,
+            );
+          }
+          return this.authClient;
+        } catch (error) {
+          this.authError = this.errorMessage(error);
+          this.authLoadPromise = null;
+          if (this.pendingPurchase) {
+            this.showAuthGate(
+              this.pendingPurchase.product,
+              this.pendingPurchase.options,
+            );
+          }
+          return null;
+        }
+      })();
+      return this.authLoadPromise;
     }
 
     async updateIdentity(identity) {
       this.identity = identity;
       const authStatus = this.authClient?.status?.();
       this.applyAuthStatus(authStatus);
-      const authButton = this.$("#auth");
-      const identityName = this.$("#identity-name");
       if (!authStatus?.sessionActive) {
         this.delegation = null;
-        identityName.hidden = true;
-        identityName.textContent = "";
-        authButton.hidden = false;
-        authButton.textContent = this.authBranch === "shopify_return_fallback"
-          ? "Continue sign-in"
-          : "Sign in with Shopify";
-        for (const id of ["#limit-field", "#approve", "#revoke"]) {
-          this.$(id).hidden = true;
+        if (this.pendingPurchase && this.authBranch !== "initializing") {
+          this.showAuthStatusGate(
+            this.pendingPurchase.product,
+            this.pendingPurchase.options,
+            authStatus,
+          );
         }
-        this.$("#approve").disabled = true;
-        this.$("#revoke").disabled = true;
-        this.$("#wallet-state").textContent = "[ SIGN IN TO BUY ]";
-        this.$("#wallet-state").title =
-          "Catalog search remains available without sign-in; only payment is blocked.";
         return;
       }
-      for (const id of ["#limit-field", "#approve", "#revoke"]) {
-        this.$(id).hidden = false;
-      }
-      identityName.hidden = false;
-      identityName.textContent = `${identity?.displayName || "Shopify 고객"}님으로 로그인됨`;
-      authButton.hidden = true;
       if (!identity?.walletAddress) {
         this.delegation = null;
-        this.$("#approve").disabled = true;
-        this.$("#revoke").disabled = true;
-        this.$("#wallet-state").textContent = "[ VERIFIED WALLET REQUIRED ]";
-        this.$("#wallet-state").title =
-          "This Clerk account needs a registered Solana wallet before payment.";
+        if (this.pendingPurchase) {
+          this.showWalletGate(
+            this.pendingPurchase.product,
+            this.pendingPurchase.options,
+          );
+        }
         return;
       }
-      this.$("#approve").disabled = false;
       await this.refreshDelegation();
+      await this.maybeResumePendingPurchase();
     }
 
     applyAuthStatus(status) {
@@ -782,10 +1186,240 @@
       this.dataset.authBranchSource = status.source || "";
     }
 
-    async toggleAuth() {
+    loadPendingPurchase() {
       try {
+        const pending = JSON.parse(sessionStorage.getItem(this.pendingPurchaseKey) || "null");
+        if (!pending?.product || !Number.isFinite(pending?.createdAt)) return null;
+        if (Date.now() - pending.createdAt > 30 * 60 * 1000) {
+          sessionStorage.removeItem(this.pendingPurchaseKey);
+          return null;
+        }
+        return pending;
+      } catch {
+        return null;
+      }
+    }
+
+    rememberPendingPurchase(product, options = {}) {
+      const budget = Number(options.budget || this.lastIntent?.budget || this.defaultBudget(product));
+      this.pendingPurchase = {
+        product,
+        options: {
+          budget,
+          announceSelection: options.announceSelection !== false,
+        },
+        createdAt: Date.now(),
+      };
+      try {
+        sessionStorage.setItem(
+          this.pendingPurchaseKey,
+          JSON.stringify(this.pendingPurchase),
+        );
+      } catch {}
+      return this.pendingPurchase;
+    }
+
+    clearPendingPurchase() {
+      this.pendingPurchase = null;
+      try {
+        sessionStorage.removeItem(this.pendingPurchaseKey);
+      } catch {}
+    }
+
+    deactivatePurchaseGates() {
+      this.shadowRoot.querySelectorAll("[data-purchase-gate]").forEach((message) => {
+        message.querySelector(".inline-actions")?.remove();
+        delete message.dataset.purchaseGate;
+        delete message.dataset.purchaseKey;
+      });
+      this.activeGate = null;
+    }
+
+    purchaseGateKey(kind, product, options = {}) {
+      const identity = product?.variantId || product?.sku || product?.id || product?.title || "product";
+      return `${kind}:${identity}:${Number(options.budget || 0).toFixed(2)}`;
+    }
+
+    createPurchaseGate(kind, text, key = kind) {
+      if (this.activeGate?.isConnected && this.activeGate.dataset.purchaseKey === key) {
+        return null;
+      }
+      this.deactivatePurchaseGates();
+      const { message, body } = this.appendMessage("agent", text);
+      message.dataset.purchaseGate = kind;
+      message.dataset.purchaseKey = key;
+      const panel = document.createElement("div");
+      panel.className = "inline-actions";
+      body.append(panel);
+      this.activeGate = message;
+      return panel;
+    }
+
+    showAuthGate(product, options = {}, gateOptions = {}) {
+      this.rememberPendingPurchase(product, options);
+      const panel = this.createPurchaseGate(
+        gateOptions.continuation ? "auth-continuation" : "auth",
+        gateOptions.continuation
+          ? `Continue sign-in to buy ${product.title}. Search and comparison are still available without signing in.`
+          : `Sign in only when you’re ready to buy ${product.title}. Search and comparison stay available without an account.`,
+        this.purchaseGateKey(
+          gateOptions.continuation ? "auth-continuation" : "auth",
+          product,
+          options,
+        ),
+      );
+      if (!panel) return;
+      const kicker = document.createElement("span");
+      kicker.className = "inline-kicker";
+      kicker.textContent = "Payment identity required";
+      const note = document.createElement("p");
+      note.className = "inline-note";
+      note.textContent = this.authError ||
+        "Shopify starts the verified Clerk session; payment never goes through Shopify checkout.";
+      const button = document.createElement("button");
+      button.className = "primary";
+      button.type = "button";
+      button.textContent = gateOptions.continuation
+        ? "Continue secure sign-in"
+        : "Sign in with Shopify";
+      button.addEventListener("click", () => this.toggleAuth(button));
+      panel.append(kicker, note, button);
+      this.scrollToLatest();
+    }
+
+    showAuthStatusGate(product, options = {}, status = this.authClient?.status?.()) {
+      if (status?.fallbackExhausted) {
+        this.showAuthFailureGate(product, options, status);
+        return;
+      }
+      if (status?.fallbackRetrying) {
+        this.showAuthRetryGate(product, options, status);
+        return;
+      }
+      this.showAuthGate(product, options, {
+        continuation: status?.branch === "shopify_return_fallback",
+      });
+    }
+
+    showAuthRetryGate(product, options = {}, status = {}) {
+      this.rememberPendingPurchase(product, options);
+      const panel = this.createPurchaseGate(
+        "auth-sso-retry",
+        `Finishing secure sign-in before buying ${product.title}. Clerk SSO is making its one bounded retry now.`,
+        this.purchaseGateKey("auth-sso-retry", product, options),
+      );
+      if (!panel) return;
+      const kicker = document.createElement("span");
+      kicker.className = "inline-kicker";
+      kicker.textContent = "Secure sign-in returning";
+      const note = document.createElement("p");
+      note.className = "inline-note";
+      note.textContent =
+        "Only one automatic retry is allowed. Search and comparison remain available; no payment has been attempted.";
+      panel.append(kicker, note);
+      this.scrollToLatest();
+    }
+
+    showAuthFailureGate(product, options = {}, status = {}) {
+      this.rememberPendingPurchase(product, options);
+      const panel = this.createPurchaseGate(
+        "auth-sso-failed",
+        `Secure sign-in could not establish a storefront session for ${product.title}. Automatic redirects have stopped.`,
+        this.purchaseGateKey("auth-sso-failed", product, options),
+      );
+      if (!panel) return;
+      const kicker = document.createElement("span");
+      kicker.className = "inline-kicker";
+      kicker.textContent = "Sign-in needs browser attention";
+      const note = document.createElement("p");
+      note.className = "inline-note";
+      note.textContent =
+        `${status.fallbackMessage || "Clerk SSO returned twice without a session."} ` +
+        "No payment was attempted and search and comparison remain available. Allow cross-site cookies and the Clerk development-browser token in this same browser before trying again.";
+      panel.append(kicker, note);
+      this.scrollToLatest();
+    }
+
+    showWalletGate(product, options = {}) {
+      this.rememberPendingPurchase(product, options);
+      const panel = this.createPurchaseGate(
+        "wallet",
+        `Your account is signed in, but it does not have a verified Solana wallet. Add the wallet to this Clerk account before buying ${product.title}.`,
+        this.purchaseGateKey("wallet", product, options),
+      );
+      if (!panel) return;
+      const kicker = document.createElement("span");
+      kicker.className = "inline-kicker";
+      kicker.textContent = "Verified wallet required";
+      const note = document.createElement("p");
+      note.className = "inline-note";
+      note.textContent =
+        "No payment was attempted. You can keep searching and comparing products in this conversation.";
+      panel.append(kicker, note);
+      this.scrollToLatest();
+    }
+
+    showApprovalGate(product, options = {}, status = null) {
+      const pending = this.rememberPendingPurchase(product, options);
+      const budget = Number(pending.options.budget);
+      const remaining = this.delegationRemaining(status);
+      const panel = this.createPurchaseGate(
+        "delegation",
+        status?.active
+          ? `The current ${remaining.toFixed(2)} USDC allowance is below this ${budget.toFixed(2)} USDC purchase cap. Set a new limit to continue.`
+          : `Approve an on-chain spending limit before I buy ${product.title}. This is the only wallet approval step.`,
+        this.purchaseGateKey(
+          status?.active ? "delegation-insufficient" : "delegation",
+          product,
+          pending.options,
+        ),
+      );
+      if (!panel) return;
+      const kicker = document.createElement("span");
+      kicker.className = "inline-kicker";
+      kicker.textContent = status?.active ? "More allowance required" : "One-time SPL delegation";
+      const note = document.createElement("p");
+      note.className = "inline-note";
+      note.textContent =
+        "The broker can spend only within this USDC limit. Search and comparison do not require approval.";
+      const row = document.createElement("div");
+      row.className = "inline-action-row";
+      const label = document.createElement("label");
+      label.className = "inline-limit";
+      label.textContent = "Limit · USDC";
+      const input = document.createElement("input");
+      input.type = "number";
+      input.inputMode = "decimal";
+      input.min = "0.000001";
+      input.step = "0.01";
+      input.value = Math.max(1, budget).toFixed(2);
+      input.setAttribute("aria-label", "USDC delegation limit");
+      label.append(input);
+      const button = document.createElement("button");
+      button.className = "primary";
+      button.type = "button";
+      button.textContent = "Approve once";
+      button.addEventListener("click", () => this.approve(input, button));
+      row.append(label, button);
+      panel.append(kicker, note, row);
+      this.scrollToLatest();
+    }
+
+    async toggleAuth(button) {
+      const originalText = button?.textContent || "Sign in with Shopify";
+      try {
+        if (button) {
+          button.disabled = true;
+          button.textContent = "Opening secure sign-in…";
+        }
         if (!this.authClient) await this.loadAuth();
-        if (this.identity) return;
+        if (!this.authClient) {
+          throw new Error(this.authError || "Shopify sign-in is unavailable.");
+        }
+        if (this.authClient.status()?.sessionActive) {
+          await this.maybeResumePendingPurchase();
+          return;
+        }
         if (this.authBranch === "shopify_return_fallback") {
           await this.authClient.openFallbackSignIn();
         } else {
@@ -793,35 +1427,16 @@
         }
       } catch (error) {
         this.appendMessage("agent", this.errorMessage(error));
+      } finally {
+        if (button?.isConnected) {
+          button.disabled = false;
+          button.textContent = originalText;
+        }
       }
     }
 
     renderDelegation(status) {
       this.delegation = status;
-      const state = this.$("#wallet-state");
-      // Delegation controls only mean something once a wallet is signed in.
-      const signedIn = Boolean(this.identity?.walletAddress);
-      for (const id of ["#limit-field", "#approve", "#revoke"]) {
-        this.$(id).hidden = !signedIn;
-      }
-      if (!signedIn) {
-        state.textContent = "[ SIGN IN TO BUY ]";
-        return;
-      }
-      const wallet = this.short(this.identity.walletAddress);
-      if (status?.active) {
-        const amount = status.allowanceRemaining?.amount || "0";
-        state.textContent = `[ ${wallet} · ${amount} USDC LEFT ]`;
-        state.title =
-          `Delegator ${this.identity.walletAddress}; delegate ${status.delegateAuthority}`;
-        state.classList.remove("error");
-        this.$("#revoke").disabled = false;
-      } else {
-        state.textContent = `[ ${wallet} · APPROVAL REQUIRED ]`;
-        state.title = "Approve the broker once from this Clerk-verified wallet.";
-        state.classList.add("error");
-        this.$("#revoke").disabled = true;
-      }
     }
 
     async refreshDelegation() {
@@ -831,40 +1446,79 @@
         this.renderDelegation(status);
         return status;
       } catch (error) {
-        this.$("#wallet-state").textContent = "[ DELEGATION UNAVAILABLE ]";
-        this.$("#wallet-state").title = this.errorMessage(error);
-        this.$("#wallet-state").classList.add("error");
+        this.delegationError = this.errorMessage(error);
         return null;
       }
     }
 
-    async approve() {
+    delegationRemaining(status = this.delegation) {
+      const amount = Number(status?.allowanceRemaining?.amount || 0);
+      return Number.isFinite(amount) ? amount : 0;
+    }
+
+    delegationCovers(status, budget) {
+      return Boolean(
+        status?.active &&
+        status?.approvalTxSignature &&
+        this.delegationRemaining(status) + Number.EPSILON >= Number(budget),
+      );
+    }
+
+    appendDelegationStatus(text, status = this.delegation) {
+      if (!status?.active || !this.identity?.walletAddress) return;
+      const { body } = this.appendMessage("agent", text);
+      const controls = document.createElement("div");
+      controls.className = "inline-delegation-status";
+      const state = document.createElement("span");
+      state.textContent =
+        `${this.short(this.identity.walletAddress)} · ${status.allowanceRemaining?.amount || "0"} USDC left`;
+      const button = document.createElement("button");
+      button.className = "quiet-action";
+      button.type = "button";
+      button.textContent = "Revoke delegation";
+      button.addEventListener("click", () => this.revoke(button));
+      controls.append(state, button);
+      body.append(controls);
+    }
+
+    async approve(input, button) {
       if (this.busy) return;
-      const limit = Number(this.$("#delegation-limit").value);
+      const limit = Number(input?.value);
+      if (!Number.isFinite(limit) || limit <= 0) {
+        this.appendMessage("agent", "Enter a positive USDC delegation limit.");
+        input?.focus();
+        return;
+      }
+      let approved = false;
       this.setBusy(true);
-      this.$("#approve").textContent = "Check Phantom…";
+      if (button) button.textContent = "Check Phantom…";
       try {
         const status = await this.authClient.approveDelegation(limit);
         this.renderDelegation(status);
-        this.appendMessage(
-          "agent",
+        this.deactivatePurchaseGates();
+        this.appendDelegationStatus(
           `On-chain limit approved: ${status.allowanceRemaining.amount} USDC. The broker can now buy from this wallet with 0 additional approval clicks until the limit is spent or revoked.`,
+          status,
         );
+        approved = true;
       } catch (error) {
         this.appendMessage("agent", this.errorMessage(error));
       } finally {
-        this.$("#approve").textContent = "Approve once";
+        if (button?.isConnected) button.textContent = "Approve once";
         this.setBusy(false);
       }
+      if (approved) await this.maybeResumePendingPurchase();
     }
 
-    async revoke() {
+    async revoke(button) {
       if (this.busy) return;
       this.setBusy(true);
-      this.$("#revoke").textContent = "Check Phantom…";
+      if (button) button.textContent = "Check Phantom…";
       try {
         const status = await this.authClient.revokeDelegation();
         this.renderDelegation(status);
+        this.shadowRoot.querySelectorAll(".inline-delegation-status")
+          .forEach((controls) => controls.remove());
         this.appendMessage(
           "agent",
           "SPL delegation revoked on-chain. Future web purchases are blocked until you approve again.",
@@ -872,7 +1526,7 @@
       } catch (error) {
         this.appendMessage("agent", this.errorMessage(error));
       } finally {
-        this.$("#revoke").textContent = "Revoke";
+        if (button?.isConnected) button.textContent = "Revoke delegation";
         this.setBusy(false);
       }
     }
@@ -881,56 +1535,54 @@
       return this.delegation?.approvalTxSignature || "";
     }
 
-    async requirePurchaseDelegation() {
-      if (!this.authClient?.status?.().sessionActive) {
-        throw new Error(
-          "Sign in through Shopify before buying. Catalog search and comparison remain available.",
-        );
+    async requirePurchaseDelegation(product, options = {}) {
+      const pending = this.rememberPendingPurchase(product, options);
+      if (!this.authClient) await this.loadAuth();
+      const authStatus = this.authClient?.status?.();
+      if (!authStatus?.sessionActive) {
+        this.showAuthStatusGate(product, pending.options, authStatus);
+        return null;
       }
       if (!this.identity?.walletAddress) {
-        throw new Error(
-          "Register and connect a Solana wallet on this Clerk account before buying.",
-        );
+        this.showWalletGate(product, pending.options);
+        return null;
       }
       const status = await this.refreshDelegation();
-      if (!status?.active || !status.approvalTxSignature) {
-        throw new Error(
-          "Approve the broker once in Phantom before buying. The on-chain limit is the spending authority.",
-        );
+      if (!this.delegationCovers(status, pending.options.budget)) {
+        this.showApprovalGate(product, pending.options, status);
+        return null;
       }
       return status;
     }
 
-    async loadWallet() {
-      const state = this.$("#wallet-state");
-      if (!this.isConfigured()) {
-        state.textContent = "[ CONFIGURE AGENT URL ]";
-        state.classList.add("error");
+    async maybeResumePendingPurchase() {
+      if (!this.pendingPurchase || this.resumeInFlight || this.busy) return;
+      const pending = this.pendingPurchase;
+      const authStatus = this.authClient?.status?.();
+      if (!authStatus?.sessionActive) {
+        this.showAuthStatusGate(pending.product, pending.options, authStatus);
         return;
       }
-      try {
-        const balances = await this.fetchJson("/wallet-balances");
-        if (balances.error) throw new Error(balances.error);
-        this.cluster = balances.cluster || "devnet";
-        this.walletAddress = balances.buyer?.address || "";
-        const usdc = balances.buyer?.usdc ?? "—";
-        state.textContent = `[ AGENT READY · ${usdc} USDC ]`;
-        state.title = this.walletAddress;
-        state.classList.remove("error");
-      } catch (error) {
-        try {
-          const health = await this.fetchJson("/health");
-          if (!health.ok) throw new Error("Buyer health check failed");
-          state.textContent = "[ AGENT READY · DEVNET ]";
-          state.title = `Balance display temporarily unavailable: ${this.errorMessage(error)}`;
-          state.classList.remove("error");
-        } catch (healthError) {
-          state.textContent = "[ AGENT UNAVAILABLE ]";
-          state.title = this.errorMessage(healthError);
-          state.classList.add("error");
-        }
+      if (!this.identity?.walletAddress) {
+        this.showWalletGate(pending.product, pending.options);
+        return;
       }
-      if (this.identity?.walletAddress) await this.refreshDelegation();
+      this.resumeInFlight = true;
+      try {
+        const status = await this.refreshDelegation();
+        if (!this.delegationCovers(status, pending.options.budget)) {
+          this.showApprovalGate(pending.product, pending.options, status);
+          return;
+        }
+        this.deactivatePurchaseGates();
+        this.clearPendingPurchase();
+        await this.startPurchase(pending.product, {
+          ...pending.options,
+          skipGate: true,
+        });
+      } finally {
+        this.resumeInFlight = false;
+      }
     }
 
     parseBudget(text) {
@@ -1030,12 +1682,32 @@
       const text = input.value.trim();
       if (!text) return;
       input.value = "";
+      if (this.pendingPurchase) {
+        this.clearPendingPurchase();
+        this.deactivatePurchaseGates();
+      }
       this.appendMessage("user", text);
       await this.sendChat(text);
     }
 
     async sendChat(text) {
       if (this.busy) return;
+      if (this.lastCandidates.length) {
+        const requestedIndex = this.selectionIndex(text);
+        const explicitSelection =
+          requestedIndex != null &&
+          /\b(?:buy|choose|pay|order|take|select|want)\b/i.test(text);
+        if (explicitSelection || this.delegated(text)) {
+          const product = this.lastCandidates[requestedIndex ?? 0];
+          if (product) {
+            await this.startPurchase(product, {
+              announceSelection: false,
+              budget: this.lastIntent?.budget || this.defaultBudget(product),
+            });
+            return;
+          }
+        }
+      }
       this.setBusy(true);
       let result;
       try {
@@ -1155,8 +1827,7 @@
         }
       }
       this.showCandidates(text);
-      const state = this.$("#wallet-state");
-      state.title = `Conversational API fallback: ${this.errorMessage(chatError)}`;
+      this.dataset.chatFallback = this.errorMessage(chatError).slice(0, 180);
     }
 
     formatMoney(product) {
@@ -1463,23 +2134,33 @@
       this.busy = value;
       this.$("#send").disabled = value;
       this.$("#prompt").disabled = value;
-      this.shadowRoot.querySelectorAll(".card button, .delegate button").forEach((button) => {
+      this.shadowRoot.querySelectorAll(
+        ".card button, .delegate button, .inline-actions button, .inline-delegation-status button",
+      ).forEach((button) => {
         button.disabled = value || button.textContent === "Over cap";
+      });
+      this.shadowRoot.querySelectorAll(".inline-actions input").forEach((input) => {
+        input.disabled = value;
       });
     }
 
     async startPurchase(product, options = {}) {
       if (this.busy || !product) return;
-      try {
-        await this.requirePurchaseDelegation();
-      } catch (error) {
-        this.appendMessage("agent", this.errorMessage(error));
-        return;
+      const budget = Number(
+        options.budget || this.lastIntent?.budget || this.defaultBudget(product),
+      );
+      if (!options.skipGate) {
+        const delegation = await this.requirePurchaseDelegation(product, {
+          ...options,
+          budget,
+        });
+        if (!delegation) return;
       }
+      this.deactivatePurchaseGates();
+      this.clearPendingPurchase();
       if (options.announceSelection !== false) {
         this.appendMessage("user", `Choose ${product.title} and pay autonomously.`);
       }
-      const budget = options.budget || this.lastIntent?.budget || this.defaultBudget(product);
       const progress = this.createProgress(product, budget);
       this.setBusy(true);
 
@@ -1499,7 +2180,13 @@
           }),
         });
         this.renderResult(progress, result, budget);
-        await this.refreshDelegation();
+        const status = await this.refreshDelegation();
+        if (status?.active) {
+          this.appendDelegationStatus(
+            "Your remaining on-chain limit is shown here only because a purchase just finished.",
+            status,
+          );
+        }
       } catch (error) {
         this.renderFailure(progress, error);
       } finally {
