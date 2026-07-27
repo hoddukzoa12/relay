@@ -37,13 +37,72 @@ export const PaymentRequestSchema = z.object({
 });
 export type PaymentRequest = z.infer<typeof PaymentRequestSchema>;
 
+/**
+ * Real supplier-fulfillment destination.
+ *
+ * All required fields must come from the buyer. Relay never fills missing
+ * values with demo data, and commerce writes this to Shopify only behind the
+ * default-off monetary safety gate.
+ */
+const StructuredAddressTextSchema = z
+  .string()
+  .trim()
+  .min(1)
+  .refine(
+    (value) =>
+      !/^(?:n\/?a|none|unknown|test|testing|placeholder|todo|tbd|-+)$/i.test(
+        value,
+      ),
+    "placeholder address values are forbidden",
+  );
+
+export const StructuredShippingAddressSchema = z.object({
+  name: StructuredAddressTextSchema,
+  address1: StructuredAddressTextSchema,
+  address2: StructuredAddressTextSchema.nullish(),
+  city: StructuredAddressTextSchema,
+  province: StructuredAddressTextSchema,
+  country: z.string().regex(/^[A-Z]{2}$/, "ISO-3166-1 alpha-2"),
+  zip: StructuredAddressTextSchema.refine(
+    (value) => value.length >= 3,
+    "postal code must have at least 3 characters",
+  ),
+  phone: StructuredAddressTextSchema.refine(
+    (value) => value.length >= 5,
+    "phone must have at least 5 characters",
+  ).nullish(),
+});
+export type StructuredShippingAddress = z.infer<
+  typeof StructuredShippingAddressSchema
+>;
+
 /** A2A — buyer agent → shopping agent (Step 1): the purchase intent. */
 export const PurchaseIntentSchema = z.object({
   query: z.string(), // natural-language product ask
   budget: MoneySchema, // ceiling the buyer will pay
-  shipTo: z.string(), // destination address (free text for the demo)
+  shipTo: z.string(), // legacy free-text destination; retained for compatibility
+  shippingAddress: StructuredShippingAddressSchema.nullish(),
 });
 export type PurchaseIntent = z.infer<typeof PurchaseIntentSchema>;
+
+/**
+ * Admin-only supplier-cost evidence captured from DSers MCP.
+ *
+ * This is a dated snapshot, not a live quote. It is consumed by the broker and
+ * persisted on the Shopify order ledger, but must not be rendered in the
+ * storefront or returned by the public wallet-order projection.
+ */
+export const SupplierCostSnapshotSchema = z.object({
+  amount: z.string().regex(/^\d+(\.\d{1,6})?$/, "decimal string, ≤6 dp"),
+  currency: z.literal("USD"),
+  source: z.enum(["dsers_mcp_snapshot", "relay_demo_catalog"]),
+  capturedAt: z.string().min(1),
+  shipTo: z.string().min(2),
+  supplierUrl: z.string().url().nullable(),
+});
+export type SupplierCostSnapshot = z.infer<
+  typeof SupplierCostSnapshotSchema
+>;
 
 /** Commerce-service catalog variant used for grounded sourcing. */
 export const CatalogProductSchema = z.object({
@@ -56,6 +115,7 @@ export const CatalogProductSchema = z.object({
   inventoryQuantity: z.number().int(),
   status: z.literal("ACTIVE"),
   tags: z.array(z.string()),
+  supplierCost: SupplierCostSnapshotSchema.nullable(),
 });
 export type CatalogProduct = z.infer<typeof CatalogProductSchema>;
 
@@ -65,6 +125,27 @@ export const CatalogProductsResponseSchema = z.object({
 export type CatalogProductsResponse = z.infer<
   typeof CatalogProductsResponseSchema
 >;
+
+/**
+ * Supplier-side order state. `disabled` and `blocked` are explicit no-order
+ * states; `pending` means Shopify accepted a structurally eligible order but
+ * the downstream DSers result has not yet been confirmed.
+ */
+export const SupplierOrderSchema = z.object({
+  provider: z.literal("dsers"),
+  status: z.enum([
+    "disabled",
+    "blocked",
+    "not_connected",
+    "pending",
+    "submitted",
+    "confirmed",
+    "failed",
+  ]),
+  ref: z.string().min(1).nullable(),
+  message: z.string().min(1),
+});
+export type SupplierOrder = z.infer<typeof SupplierOrderSchema>;
 
 /** Wallet-owned order projection used by the authenticated "my orders" view. */
 export const WalletOrderSchema = z.object({
@@ -78,6 +159,7 @@ export const WalletOrderSchema = z.object({
   buyerWallet: z.string(),
   txSignature: z.string(),
   explorer: z.string(),
+  supplierOrder: SupplierOrderSchema,
 });
 export type WalletOrder = z.infer<typeof WalletOrderSchema>;
 
@@ -116,8 +198,9 @@ export const RefundStateSchema = z.object({
 });
 export type RefundState = z.infer<typeof RefundStateSchema>;
 
+/** Carrier details are reserved for a future real supplier shipment. */
 export const TrackingInfoSchema = z.object({
-  provider: z.literal("easypost"),
+  provider: z.enum(["shopify", "easypost"]),
   carrier: z.string().min(1),
   trackingNumber: z.string().min(1),
   status: z.string().min(1),
@@ -139,6 +222,7 @@ export const OrderStatusSchema = z.object({
   amount: MoneySchema,
   payment: PaymentProofSchema,
   refund: RefundStateSchema,
+  supplierOrder: SupplierOrderSchema,
   tracking: TrackingInfoSchema.nullable(),
 });
 export type OrderStatus = z.infer<typeof OrderStatusSchema>;
@@ -246,6 +330,7 @@ export const IntentMandateSchema = z.object({
   requires_refundability: z.boolean().nullish(),
   price_ceiling: MoneySchema,
   ship_to: z.string(),
+  shipping_address: StructuredShippingAddressSchema.nullish(),
   intent_expiry: z.string(),
   // Human identity wallet for browser-delegated intents. Omitted by the
   // retained agent-only path, whose configured buyer wallet signs the intent.
@@ -335,6 +420,7 @@ export const OrderConfirmationSchema = z.object({
   txSignature: z.string().nullable(),
   explorer: z.string().nullable(),
   shopifyOrderId: z.string().nullable(),
+  supplierOrder: SupplierOrderSchema,
 });
 export type OrderConfirmation = z.infer<typeof OrderConfirmationSchema>;
 

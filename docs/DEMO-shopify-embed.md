@@ -133,6 +133,12 @@ The fixed `5` USDC ceiling covers the current supplier catalog's 15% markup
 without deriving a payment authorization from presentation-layer price
 formatting.
 
+Keep `SUPPLIER_FULFILLMENT_ENABLED=false` for this rehearsal. Setting it to
+`true` can make a paid order with a complete structured address enter the
+store's DSers/AliExpress auto-ordering path and incur a real supplier charge;
+this legacy free-text widget destination is intentionally insufficient for
+that handoff.
+
 The widget's configurable element is:
 
 ```html

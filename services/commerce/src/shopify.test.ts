@@ -21,15 +21,15 @@ import {
   getOrderStatus,
   isTemporaryOrderMutationError,
   listOrdersByWallet,
+  marginEvidence,
   markOrderRefunded,
+  disabledSupplierOrder,
   orderTag,
+  supplierOrderForInput,
+  trackOrder,
+  trackingInfoFromFulfillments,
   type OrderInput,
 } from "./shopify.js";
-import {
-  DEMO_TRACKING_NUMBER,
-  EasyPostTrackingProvider,
-  demoTrackingInfo,
-} from "./tracking.js";
 
 const input = (orderRef: string): OrderInput => ({
   orderRef,
@@ -42,7 +42,26 @@ const input = (orderRef: string): OrderInput => ({
   paymentReference: `reference-${orderRef}`,
   txSignature: "signature",
   explorer: "https://explorer.test/signature",
+  supplierCost: {
+    amount: "1.00",
+    currency: "USD",
+    source: "dsers_mcp_snapshot",
+    capturedAt: "2026-07-27",
+    shipTo: "US",
+    supplierUrl: "https://supplier.test/item/1",
+  },
 });
+
+const realFormatShippingAddress = {
+  name: "Grace Hopper",
+  address1: "123 Main St",
+  address2: null,
+  city: "Arlington",
+  province: "VA",
+  country: "US",
+  zip: "22201",
+  phone: null,
+} as const;
 
 test("mock order creation returns one result for sequential replays", async () => {
   const order = input(`order-${crypto.randomUUID()}`);
@@ -82,7 +101,7 @@ test("wallet order lookup returns only the signed-in wallet's orders", async () 
   assert.equal(orders[0]?.buyerWallet, wallet);
 });
 
-test("mock order lifecycle supports lookup, idempotent fulfillment, and refund", async () => {
+test("mock order lifecycle exposes supplier state, refuses fake fulfillment, and refunds", async () => {
   const order = input(`order-${crypto.randomUUID()}`);
   const created = await createPaidOrder(order);
 
@@ -94,14 +113,17 @@ test("mock order lifecycle supports lookup, idempotent fulfillment, and refund",
   assert.equal(byRef.lineItems[0]?.sku, "RELAY-IDEMPOTENCY");
   assert.equal(byRef.payment.reference, order.paymentReference);
   assert.equal(byRef.refund.status, "not_refunded");
+  assert.deepEqual(byRef.supplierOrder, disabledSupplierOrder());
+  assert.equal(byRef.tracking, null);
 
-  const fulfilled = await fulfillOrder(order.orderRef);
-  const fulfillmentReplay = await fulfillOrder(order.orderRef);
-  assert.equal(fulfilled.fulfillmentStatus, "FULFILLED");
-  assert.equal(fulfilled.tracking.trackingNumber, DEMO_TRACKING_NUMBER);
-  assert.equal(fulfilled.tracking.demo, true);
-  assert.equal(fulfilled.replayed, false);
-  assert.equal(fulfillmentReplay.replayed, true);
+  await assert.rejects(
+    fulfillOrder(order.orderRef),
+    /cannot be fulfilled.*supplier fulfillment is disabled/i,
+  );
+  await assert.rejects(
+    trackOrder(order.orderRef),
+    /no real tracking number.*supplier fulfillment is disabled/i,
+  );
 
   const refunded = await markOrderRefunded(
     order.orderRef,
@@ -129,37 +151,22 @@ test("mock order lifecycle supports lookup, idempotent fulfillment, and refund",
   );
 });
 
-test("demo tracking metadata never claims a real shipment", () => {
-  const tracking = demoTrackingInfo();
-  assert.equal(tracking.demo, true);
-  assert.match(tracking.message, /DEMO.*not.*real parcel/i);
-});
+test("margin evidence uses exact DSers cost without floating-point drift", () => {
+  const margin = marginEvidence("4.54", {
+    amount: "3.96",
+    currency: "USD",
+    source: "dsers_mcp_snapshot",
+    capturedAt: "2026-07-27",
+    shipTo: "US",
+    supplierUrl: "https://www.aliexpress.com/item/1005007183896560.html",
+  });
 
-test("EasyPost provider uses the official tracker endpoint", async () => {
-  let requestedUrl = "";
-  let requestedBody = "";
-  const fetchImpl = (async (url, init) => {
-    requestedUrl = String(url);
-    requestedBody = String(init?.body ?? "");
-    return Response.json({
-      tracking_code: DEMO_TRACKING_NUMBER,
-      carrier: "USPS",
-      status: "in_transit",
-      status_detail: "in_transit",
-      public_url: "https://track.easypost.test/demo",
-      est_delivery_date: null,
-    });
-  }) as typeof fetch;
-
-  const result = await new EasyPostTrackingProvider(
-    "test-key",
-    fetchImpl,
-  ).lookup(DEMO_TRACKING_NUMBER, "USPS");
-
-  assert.equal(requestedUrl, "https://api.easypost.com/v2/trackers");
-  assert.match(requestedBody, new RegExp(DEMO_TRACKING_NUMBER));
-  assert.equal(result.status, "in_transit");
-  assert.equal(result.demo, true);
+  assert.equal(margin?.projectedGrossMarginAmount, "0.58");
+  assert.equal(margin?.projectedGrossMarginPct, "12.78");
+  assert.equal(
+    margin?.basis,
+    "snapshot_usd_usdc_parity_excludes_shipping_tax",
+  );
 });
 
 test("mock catalog is deterministic and query-ranked", async () => {
@@ -235,6 +242,51 @@ test("live catalog selects the cheapest in-stock variant with a real SKU", () =>
   assert.equal(ranked.length, 2);
   assert.equal(ranked[0]?.variantId, "gid://shopify/ProductVariant/deeper-stock");
   assert.equal(ranked[0]?.sku, "RELAY-DEEP");
+  assert.equal(ranked[0]?.supplierCost, null);
+});
+
+test("live catalog reads a private supplier-cost snapshot from the selected variant", () => {
+  const products = catalogProductsFromShopify({
+    products: {
+      nodes: [
+        {
+          id: "gid://shopify/Product/1",
+          title: "TWS F9-5",
+          description: "Supplier item",
+          status: "ACTIVE",
+          tags: [],
+          variants: {
+            nodes: [
+              {
+                id: "gid://shopify/ProductVariant/1",
+                sku: "14:193#black",
+                price: "3.95",
+                inventoryQuantity: 1225,
+                supplierCost: { value: "3.96" },
+                supplierCostCurrency: { value: "USD" },
+                supplierCostSource: { value: "dsers_mcp_snapshot" },
+                supplierCostCapturedAt: { value: "2026-07-27" },
+                supplierCostShipTo: { value: "US" },
+                supplierUrl: {
+                  value:
+                    "https://www.aliexpress.com/item/1005007183896560.html",
+                },
+              },
+            ],
+          },
+        },
+      ],
+    },
+  });
+
+  assert.deepEqual(products[0]?.supplierCost, {
+    amount: "3.96",
+    currency: "USD",
+    source: "dsers_mcp_snapshot",
+    capturedAt: "2026-07-27",
+    shipTo: "US",
+    supplierUrl: "https://www.aliexpress.com/item/1005007183896560.html",
+  });
 });
 
 test("variant selection rejects unavailable and malformed choices", () => {
@@ -291,14 +343,17 @@ test("order payload binds the selected variant and SKU and rejects KRW", () => {
     productId: "gid://shopify/Product/fallback",
     variantId: "gid://shopify/ProductVariant/selected",
     sku: "14:193#black",
+    shippingAddress: realFormatShippingAddress,
   };
-  const payload = buildShopifyOrderInput(order, "USD") as {
+  const payload = buildShopifyOrderInput(order, "USD", false) as {
     currency: string;
+    shippingAddress?: Record<string, string>;
     lineItems: { variantId: string; priceSet: { shopMoney: { currencyCode: string } } }[];
     customAttributes: { key: string; value: string }[];
   };
 
   assert.equal(payload.currency, "USD");
+  assert.equal(payload.shippingAddress, undefined);
   assert.equal(
     payload.lineItems[0]?.variantId,
     "gid://shopify/ProductVariant/selected",
@@ -315,9 +370,115 @@ test("order payload binds the selected variant and SKU and rejects KRW", () => {
     payload.customAttributes.find(({ key }) => key === "sku")?.value,
     "14:193#black",
   );
+  assert.equal(
+    payload.customAttributes.find(({ key }) => key === "ship_to")?.value,
+    "Grace Hopper, 123 Main St, Arlington, VA, 22201, US",
+  );
+  assert.equal(
+    payload.customAttributes.find(({ key }) => key === "supplier_cost_amount")
+      ?.value,
+    "1.00",
+  );
+  assert.equal(
+    payload.customAttributes.find(({ key }) => key === "margin_status")?.value,
+    "projected_snapshot",
+  );
+  assert.equal(
+    payload.customAttributes.find(({ key }) => key === "supplier_order_status")
+      ?.value,
+    "disabled",
+  );
   assert.throws(
     () => buildShopifyOrderInput(order, "KRW"),
     /KRW.*not USD.*refusing/i,
+  );
+});
+
+test("shippingAddress is written only when the money gate and complete real fields are present", () => {
+  const order = {
+    ...input(`order-${crypto.randomUUID()}`),
+    shippingAddress: realFormatShippingAddress,
+  };
+  const enabled = buildShopifyOrderInput(order, "USD", true) as {
+    shippingAddress?: Record<string, string>;
+    customAttributes: { key: string; value: string }[];
+  };
+
+  assert.deepEqual(enabled.shippingAddress, {
+    firstName: "Grace",
+    lastName: "Hopper",
+    address1: "123 Main St",
+    city: "Arlington",
+    provinceCode: "VA",
+    countryCode: "US",
+    zip: "22201",
+  });
+  assert.equal(
+    enabled.customAttributes.find(
+      ({ key }) => key === "supplier_order_status",
+    )?.value,
+    "pending",
+  );
+  assert.equal(
+    enabled.customAttributes.find(
+      ({ key }) => key === "supplier_fulfillment_gate",
+    )?.value,
+    "enabled",
+  );
+  assert.equal(supplierOrderForInput(order, true).ref, null);
+});
+
+test("enabled supplier fulfillment fails closed on placeholders or incomplete fields", () => {
+  const placeholder = {
+    ...input(`order-${crypto.randomUUID()}`),
+    shippingAddress: {
+      ...realFormatShippingAddress,
+      name: "placeholder",
+    },
+  };
+  const payload = buildShopifyOrderInput(placeholder, "USD", true) as {
+    shippingAddress?: Record<string, string>;
+    customAttributes: { key: string; value: string }[];
+  };
+
+  assert.equal(payload.shippingAddress, undefined);
+  assert.equal(
+    payload.customAttributes.find(
+      ({ key }) => key === "supplier_order_status",
+    )?.value,
+    "blocked",
+  );
+  assert.equal(supplierOrderForInput(placeholder, true).ref, null);
+});
+
+test("tracking is exposed only from a real Shopify carrier and number", () => {
+  const real = trackingInfoFromFulfillments([
+    {
+      id: "gid://shopify/Fulfillment/1",
+      status: "SUCCESS",
+      trackingInfo: [
+        {
+          company: "USPS",
+          number: "TEST-ONLY-NOT-A-SHIPMENT",
+          url: "https://carrier.test/fixture",
+        },
+      ],
+    },
+  ]);
+
+  assert.equal(real?.provider, "shopify");
+  assert.equal(real?.demo, false);
+  assert.equal(real?.carrier, "USPS");
+  assert.equal(real?.trackingNumber, "TEST-ONLY-NOT-A-SHIPMENT");
+  assert.equal(
+    trackingInfoFromFulfillments([
+      {
+        id: "gid://shopify/Fulfillment/2",
+        status: "SUCCESS",
+        trackingInfo: [{ company: null, number: null, url: null }],
+      },
+    ]),
+    null,
   );
 });
 

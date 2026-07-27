@@ -14,6 +14,7 @@
     "amount",
     "payment",
     "refund",
+    "supplierOrder",
     "tracking"
   ],
   "properties": {
@@ -30,6 +31,7 @@
     "amount": { "$ref": "#/$defs/money" },
     "payment": { "$ref": "#/$defs/paymentProof" },
     "refund": { "$ref": "#/$defs/refundState" },
+    "supplierOrder": { "$ref": "#/$defs/supplierOrder" },
     "tracking": {
       "oneOf": [
         { "$ref": "#/$defs/trackingInfo" },
@@ -104,6 +106,32 @@
         }
       }
     },
+    "supplierOrder": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["provider", "status", "ref", "message"],
+      "properties": {
+        "provider": { "const": "dsers" },
+        "status": {
+          "enum": [
+            "disabled",
+            "blocked",
+            "not_connected",
+            "pending",
+            "submitted",
+            "confirmed",
+            "failed"
+          ]
+        },
+        "ref": {
+          "oneOf": [
+            { "type": "string", "minLength": 1 },
+            { "type": "null" }
+          ]
+        },
+        "message": { "type": "string", "minLength": 1 }
+      }
+    },
     "trackingInfo": {
       "type": "object",
       "additionalProperties": false,
@@ -119,7 +147,7 @@
         "message"
       ],
       "properties": {
-        "provider": { "const": "easypost" },
+        "provider": { "enum": ["shopify", "easypost"] },
         "carrier": { "type": "string", "minLength": 1 },
         "trackingNumber": { "type": "string", "minLength": 1 },
         "status": { "type": "string", "minLength": 1 },

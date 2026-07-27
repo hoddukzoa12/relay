@@ -17,12 +17,15 @@ from ..common.contracts import (
     PaymentRequest,
     PurchaseIntent,
     SettlementRequest,
+    StructuredShippingAddress,
+    SupplierCostSnapshot,
+    format_shipping_address,
 )
 from . import tools
 
 
-class FulfillmentPendingError(RuntimeError):
-    """Payment is final but the recoverable commerce write has not completed."""
+class OrderRecordingPendingError(RuntimeError):
+    """Payment is final but the recoverable Shopify ledger write is incomplete."""
 
 
 @dataclass
@@ -31,19 +34,21 @@ class _OrderState:
     sku: str
     title: str
     amount: str
+    supplier_cost: SupplierCostSnapshot
     reference: str
     ship_to: str
+    shipping_address: StructuredShippingAddress | None = None
     buyer_wallet: str = ""
     payment_status: Literal["pending", "paid"] = "pending"
     paid_tx_signature: str | None = None
     explorer: str | None = None
-    fulfillment_status: Literal["pending", "fulfilling", "settled"] = "pending"
-    fulfillment_error: str | None = None
+    ledger_status: Literal["pending", "recording", "settled"] = "pending"
+    ledger_error: str | None = None
     confirmation: OrderConfirmation | None = None
     lock: Lock = field(default_factory=Lock)
 
 
-# In-memory order book: orderRef -> payment + fulfillment state.
+# In-memory order book: orderRef -> payment + Shopify ledger-write state.
 # Process-local (see README security notes); production needs Firestore/Redis.
 _orders: dict[str, _OrderState] = {}
 _orders_lock = Lock()
@@ -74,8 +79,14 @@ def handle_quote(intent: PurchaseIntent) -> PaymentRequest:
         sku=offer["sku"],
         title=offer["title"],
         amount=pr["price"]["amount"],
+        supplier_cost=SupplierCostSnapshot(**offer["supplierCost"]),
         reference=pr["reference"],
-        ship_to=intent.shipTo,
+        ship_to=(
+            format_shipping_address(intent.shippingAddress)
+            if intent.shippingAddress
+            else intent.shipTo
+        ),
+        shipping_address=intent.shippingAddress,
     )
     with _orders_lock:
         _orders[order_ref] = order
@@ -131,7 +142,7 @@ def handle_settle(
         if payment_already_recorded:
             if req.txSignature != order.paid_tx_signature:
                 return OrderConfirmation(orderRef=req.orderRef, status="invalid")
-            if order.fulfillment_status == "fulfilling":
+            if order.ledger_status == "recording":
                 return OrderConfirmation(
                     orderRef=req.orderRef,
                     status="pending",
@@ -139,7 +150,7 @@ def handle_settle(
                     explorer=order.explorer,
                 )
             # Mark the retry in-flight before the external commerce call.
-            order.fulfillment_status = "fulfilling"
+            order.ledger_status = "recording"
 
     if not payment_already_recorded:
         verification = tools.verify_payment(req.reference)
@@ -163,7 +174,7 @@ def handle_settle(
             if order.payment_status == "paid":
                 if req.txSignature != order.paid_tx_signature:
                     return OrderConfirmation(orderRef=req.orderRef, status="invalid")
-                if order.fulfillment_status == "fulfilling":
+                if order.ledger_status == "recording":
                     return OrderConfirmation(
                         orderRef=req.orderRef,
                         status="pending",
@@ -171,14 +182,14 @@ def handle_settle(
                         explorer=order.explorer,
                     )
             else:
-                # Persist paid-before-fulfillment so a Shopify failure cannot
+                # Persist paid-before-ledger-write so a Shopify failure cannot
                 # erase the fact that funds already moved on-chain.
                 order.payment_status = "paid"
                 order.paid_tx_signature = verification["txSignature"]
                 order.explorer = verification["explorer"]
-                order.fulfillment_status = "pending"
-                order.fulfillment_error = None
-            order.fulfillment_status = "fulfilling"
+                order.ledger_status = "pending"
+                order.ledger_error = None
+            order.ledger_status = "recording"
 
     try:
         result = tools.record_order(
@@ -192,25 +203,38 @@ def handle_settle(
             payment_reference=order.reference,
             tx_signature=order.paid_tx_signature or req.txSignature,
             explorer=order.explorer or "",
+            supplier_cost=order.supplier_cost.model_dump(),
+            shipping_address=(
+                order.shipping_address.model_dump(exclude_none=True)
+                if order.shipping_address
+                else None
+            ),
         )
     except Exception as exc:  # noqa: BLE001
         with order.lock:
-            order.fulfillment_status = "pending"
-            order.fulfillment_error = str(exc)
-        raise FulfillmentPendingError(
+            order.ledger_status = "pending"
+            order.ledger_error = str(exc)
+        raise OrderRecordingPendingError(
             f"Payment {order.paid_tx_signature} is paid on-chain; "
-            f"fulfillment for {req.orderRef} remains pending and is safe to retry: {exc}"
+            f"Shopify ledger recording for {req.orderRef} remains pending "
+            f"and is safe to retry: {exc}"
         ) from exc
 
+    supplier_order = (
+        {"supplierOrder": result["supplierOrder"]}
+        if result.get("supplierOrder")
+        else {}
+    )
     confirmation = OrderConfirmation(
         orderRef=req.orderRef,
         status="paid",
         txSignature=order.paid_tx_signature,
         explorer=order.explorer,
         shopifyOrderId=result.get("shopifyOrderId"),
+        **supplier_order,
     )
     with order.lock:
-        order.fulfillment_status = "settled"
-        order.fulfillment_error = None
+        order.ledger_status = "settled"
+        order.ledger_error = None
         order.confirmation = confirmation
     return confirmation

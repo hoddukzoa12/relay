@@ -32,7 +32,7 @@
         "message"
       ],
       "properties": {
-        "provider": { "const": "easypost" },
+        "provider": { "enum": ["shopify", "easypost"] },
         "carrier": { "type": "string", "minLength": 1 },
         "trackingNumber": { "type": "string", "minLength": 1 },
         "status": { "type": "string", "minLength": 1 },

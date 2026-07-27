@@ -5,6 +5,7 @@ from unittest.mock import patch
 
 from fastapi.testclient import TestClient
 
+from agentic_broker.buyer import agent as buyer_agent
 from agentic_broker.buyer import conversation, server
 from agentic_broker.buyer.agent import root_agent
 
@@ -61,6 +62,62 @@ def test_buyer_agent_exposes_all_conversational_tools() -> None:
         "confirm_settlement",
         "get_order_status",
     }
+
+
+def test_quote_tool_refuses_missing_structured_address_fields() -> None:
+    context = SimpleNamespace(state={})
+    with patch.object(buyer_agent.buyer_tools, "request_quote") as quote:
+        try:
+            buyer_agent.request_quote(
+                "Earbuds",
+                5.0,
+                "legacy free text",
+                context,
+                shipping_name="Grace Hopper",
+                address1="123 Main St",
+                city="Arlington",
+                province="VA",
+                country="US",
+                zip_code="",
+            )
+        except ValueError as exc:
+            assert "zip_code" in str(exc)
+        else:
+            raise AssertionError("missing ZIP must fail before quote")
+    quote.assert_not_called()
+
+
+def test_quote_tool_prefers_complete_structured_address() -> None:
+    context = SimpleNamespace(state={})
+    returned = {
+        "price": {"amount": "4.54", "currency": "USDC"},
+        "orderRef": "ord_1",
+    }
+    with patch.object(
+        buyer_agent.buyer_tools,
+        "request_quote",
+        return_value=returned,
+    ) as quote:
+        result = buyer_agent.request_quote(
+            "Earbuds",
+            5.0,
+            "ignored legacy text",
+            context,
+            shipping_name="Grace Hopper",
+            address1="123 Main St",
+            city="Arlington",
+            province="VA",
+            country="us",
+            zip_code="22201",
+        )
+
+    assert result == returned
+    assert quote.call_args.args[2] == (
+        "Grace Hopper, 123 Main St, Arlington, VA, 22201, US"
+    )
+    structured = quote.call_args.kwargs["shipping_address"]
+    assert structured.country == "US"
+    assert context.state["relay:last_shipping_address"]["zip"] == "22201"
 
 
 def test_missing_gemini_key_uses_deterministic_catalog_fallback() -> None:
@@ -140,12 +197,27 @@ def test_anonymous_fallback_chat_can_search_but_cannot_buy() -> None:
         searched = service.respond(
             "anonymous_session", "earbuds under 5 USDC"
         )
-        blocked = service.respond("anonymous_session", "buy it")
+        address_required = service.respond("anonymous_session", "buy it")
+        still_required = service.respond(
+            "anonymous_session",
+            "Name: Grace Hopper; Address1: 123 Main St",
+        )
+        blocked = service.respond(
+            "anonymous_session",
+            (
+                "City: Arlington; Province: VA; Country: US; ZIP: 22201"
+            ),
+        )
 
     assert searched["products"] == [product]
+    assert address_required["shippingAddressRequired"] is True
+    assert "will not invent" in address_required["reply"]
+    assert still_required["shippingAddressRequired"] is True
+    assert "city" in still_required["reply"]
     assert blocked["paymentBlocked"] is True
     assert "sign-in is required" in blocked["reply"]
     buy.assert_called_once()
+    assert buy.call_args.kwargs["shipping_address"].country == "US"
 
 
 def test_partial_agent_failure_never_sends_payment_twice() -> None:

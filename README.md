@@ -7,8 +7,10 @@ product, sets a resale price, and issues an **agent-native payment request**; th
 buyer's wallet **signs it autonomously — no human click** — and settles in
 **on-chain USDC on Solana devnet**. The broker verifies the payment on-chain by
 `reference`, then records a paid order in Shopify. After purchase, the same
-agent can look up, fulfill, track, and fully refund the order; refunds move USDC
-back **merchant → buyer** on-chain.
+agent can look up and fully refund the order; refunds move USDC back
+**merchant → buyer** on-chain. The connected Shopify store can hand a paid
+order to its DSers/AliExpress auto-ordering integration, but that path is behind
+a default-off money gate and requires a complete buyer-supplied address.
 
 **Why on-chain?** Two agents that don't trust each other, with no bank account,
 no card, and no human in the loop, settle instantly and verifiably. That's the
@@ -41,12 +43,16 @@ one sentence the whole design defends.
         │        Solana devnet  (~400ms)         │  ← explorer tx = proof
         └───────────────────────────────────────┘
           │                                             │
-          └────────── backstage (out of demo) ──────────┘
-                 Leg 2: we buy the real item & ship
+          └──── supplier boundary (default OFF) ────────┘
+              Shopify shippingAddress → DSers → supplier
 ```
 
 - **Leg 1** (buyer → broker, on-chain USDC) is the scored path — 100% live.
-- **Leg 2** (broker → external merchant, card rails) is operational — off-stage.
+- **Leg 2** (broker → supplier) uses the store's existing Shopify→DSers
+  auto-ordering integration. Relay emits Shopify `shippingAddress` only when
+  `SUPPLIER_FULFILLMENT_ENABLED=true` **and** every required address field is
+  real and complete. The default is `false`, so rehearsals cannot trigger a
+  supplier charge.
 
 See [`PRD.md`](./PRD.md) for the full product spec; the message flow is
 PRD §5, the data contracts are PRD §6.
@@ -102,7 +108,20 @@ make check-wallets
 
 # 5. Fallback only: seed the demo catalog when no supplier catalog is active
 pnpm seed:catalog:fallback
+
+# Optional Admin-only cost evidence: validate first, then persist after review
+pnpm sync:supplier-costs
+pnpm sync:supplier-costs -- --apply
 ```
+
+The supplier-cost sync uses exact Shopify product/variant GIDs, vendor, and SKU
+checks—never titles—and refuses a storefront-readable metafield definition.
+The committed values are a dated DSers MCP snapshot, not a live quote.
+
+> **Real-money supplier gate:** keep `SUPPLIER_FULFILLMENT_ENABLED=false` for
+> local runs and demos. Turning it on can cause the connected DSers/AliExpress
+> account to charge roughly USD 2–4.70 **for every paid purchase** that has a
+> complete structured address. Enabling it requires explicit human review.
 
 > **USDC mint:** `.env` defaults to Circle's devnet USDC
 > (`4zMMC9srt5Ri5X14GAgXhaHii3GnPAEERYPJgZJDncDU`). Make sure it matches the token
@@ -221,11 +240,18 @@ This maps to PRD §5, steps 5–8 (the judging core):
    `IntentMandate` as an A2A DataPart. Authenticated web/MCP/A2A paths record
    the verified `delegator`, agent `delegateAuthority`, and on-chain allowance
    snapshot; browser approval also records the approval transaction signature.
-   The principal-free path omits those fields. The
+   The buyer agent collects recipient name, address1, city, province/state,
+   ISO-2 country, and postal code (address2/phone optional), and asks again
+   rather than inventing a missing value. The signed mandate carries both the
+   structured address (with a Shopify-compatible province/state code) and the
+   legacy `shipTo` string. The
    original `POST /a2a/quote` route remains available for REST compatibility.
-2. **Shopping** queries live Shopify variants, removes out-of-stock and
-   marked-up-over-budget candidates, then uses Gemini (or deterministic
-   relevance) only to rank real SKUs. It calls
+2. **Shopping** queries live Shopify variants and their Admin-only DSers cost
+   snapshots, removes out-of-stock, missing-cost, and marked-up-over-budget
+   candidates, then uses Gemini (or deterministic relevance) only to rank real
+   SKUs. The reviewed Shopify USD catalog price remains the resale-price basis;
+   the independent DSers USD snapshot proves projected margin and never
+   silently reprices the store. Shopping then calls
    **payments** `POST /payment-requests` → mints a fresh `reference` pubkey and
    returns a merchant-wallet-signed `CartMandate` containing the unchanged
    [PaymentRequest](packages/shared/schemas/payment-request.schema.json) plus
@@ -244,7 +270,11 @@ This maps to PRD §5, steps 5–8 (the judging core):
    the real `variantId` and the broker resale `priceSet`, then
    `orderMarkAsPaid`, and returns an
    [OrderConfirmation](packages/shared/schemas/order-confirmation.schema.json)
-   with the explorer link.
+   with the explorer link and the truthful supplier state. With the default
+   money gate it is `disabled`; with an incomplete address it is `blocked`;
+   only a gate-enabled, complete address is written to Shopify and reported
+   `pending`; Relay does not claim a DSers reference because the current tool
+   surface cannot read one back authoritatively.
 
 The critical invariant: the buyer is handed **an agent-native payment request,
 never a Shopify web-checkout link** — so the wallet can sign without a human
@@ -252,28 +282,32 @@ click. That's what makes it *autonomous* (PRD §7).
 
 ## Post-purchase lifecycle
 
-Relay exposes the complete agent-owned lifecycle:
+Relay exposes a truthful agent-owned lifecycle:
 
 ```text
-payment → lookup → fulfillment → tracking → full refund
+payment → Shopify paid ledger ──[gate + complete address]──→ DSers automation
+        ↘ supplierOrder: disabled | blocked | pending
+        ↘ lookup / full on-chain refund
 ```
 
 - `GET /orders/{orderRef-or-name}` on the shopping agent returns financial and
-  fulfillment state, real SKU line items, the paid amount, and payment/refund
+  supplier-order state, real SKU line items, the paid amount, and payment/refund
   explorer proof. `shopping/tools.py:get_order_status` is the reusable primitive
   for the MCP `get_order_status` tool in #17.
-- `POST /orders/{orderRef}/fulfill` creates Shopify fulfillment records from
-  `fulfillmentOrders` and attaches a carrier + tracking number.
-- `GET /orders/{orderRef-or-name}/tracking` uses a replaceable official EasyPost
-  Tracker API adapter when `EASYPOST_API_KEY` is configured.
+- `POST /orders/{orderRef}/fulfill` returns `409` until a real downstream
+  supplier order exists. It never marks Shopify fulfilled speculatively.
+- `GET /orders/{orderRef-or-name}/tracking` returns `409` until a real supplier
+  shipment exists. If Shopify later contains both a carrier and tracking
+  number, Relay returns that record with `provider: "shopify"` and
+  `demo: false`; it never returns the old EasyPost demo number. The intended
+  source is DSers synchronizing a real waybill back into Shopify fulfillment,
+  not a reintroduced synthetic EasyPost adapter.
 - `POST /orders/{orderRef-or-name}/refund` first re-verifies the original Solana
   Pay transfer, then returns the full USDC amount from merchant to buyer and
   records the refund proof in Shopify.
 
-The included tracking number (`EZ2000000002`) is an EasyPost test value.
-**It is demo data, not a real parcel or shipping claim.** See
 [`docs/ORDER-LIFECYCLE.md`](docs/ORDER-LIFECYCLE.md) for endpoint details,
-idempotency boundaries, and the real devnet evidence.
+idempotency boundaries, and the explicit Leg 2 limitation.
 
 ## Deploy (Cloud Run)
 
@@ -356,10 +390,14 @@ under three minutes.
   endpoint (including tool discovery) fails closed unless `X-Relay-API-Key`
   matches `relay-mcp-api-key`. Payments, commerce, and shopping remain private
   behind Cloud Run IAM.
-- Payment, refund, and fulfillment compare-and-set state is process-local
+- Payment and refund compare-and-set state is process-local
   (in-memory); a restart forgets payment-service request state. Shopify custom
   attributes preserve completed ledger proofs, but Firestore/Redis is required
   before production.
+- `SUPPLIER_FULFILLMENT_ENABLED` is a monetary kill switch. Its default is
+  `false`. Setting it to `true` can make the external DSers/AliExpress
+  integration charge the supplier cost once a paid order contains a complete
+  `shippingAddress`; never enable it with test data or during rehearsal.
 - Devnet only. Do not point this at mainnet without an escrow/settlement review.
 
 ## License

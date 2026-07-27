@@ -1,5 +1,5 @@
 import demoCatalog from "./demo-catalog.json" with { type: "json" };
-import type { CatalogProduct } from "@arb/shared";
+import type { CatalogProduct, SupplierCostSnapshot } from "@arb/shared";
 import { config } from "./config.js";
 import {
   requireShopifyUsdcParityCurrency,
@@ -20,6 +20,12 @@ export interface ShopifyCatalogData {
           sku: string | null;
           price: string;
           inventoryQuantity: number | null;
+          supplierCost?: { value: string } | null;
+          supplierCostCurrency?: { value: string } | null;
+          supplierCostSource?: { value: string } | null;
+          supplierCostCapturedAt?: { value: string } | null;
+          supplierCostShipTo?: { value: string } | null;
+          supplierUrl?: { value: string } | null;
         }[];
       };
     }[];
@@ -41,6 +47,36 @@ const CATALOG_PRODUCTS = /* GraphQL */ `
             sku
             price
             inventoryQuantity
+            supplierCost: metafield(namespace: "relay", key: "supplier_cost") {
+              value
+            }
+            supplierCostCurrency: metafield(
+              namespace: "relay"
+              key: "supplier_cost_currency"
+            ) {
+              value
+            }
+            supplierCostSource: metafield(
+              namespace: "relay"
+              key: "supplier_cost_source"
+            ) {
+              value
+            }
+            supplierCostCapturedAt: metafield(
+              namespace: "relay"
+              key: "supplier_cost_captured_at"
+            ) {
+              value
+            }
+            supplierCostShipTo: metafield(
+              namespace: "relay"
+              key: "supplier_cost_ship_to"
+            ) {
+              value
+            }
+            supplierUrl: metafield(namespace: "relay", key: "supplier_url") {
+              value
+            }
           }
         }
       }
@@ -100,7 +136,50 @@ function mockCatalog(): CatalogProduct[] {
     inventoryQuantity: product.inventory,
     status: "ACTIVE",
     tags: product.tags,
+    supplierCost: {
+      amount: product.price,
+      currency: "USD",
+      source: "relay_demo_catalog",
+      capturedAt: "1970-01-01",
+      shipTo: "US",
+      supplierUrl: null,
+    },
   }));
+}
+
+export function supplierCostFromShopifyVariant(
+  variant: ShopifyCatalogVariant,
+): SupplierCostSnapshot | null {
+  const amount = variant.supplierCost?.value ?? "";
+  const currency = variant.supplierCostCurrency?.value;
+  const source = variant.supplierCostSource?.value;
+  const capturedAt = variant.supplierCostCapturedAt?.value ?? "";
+  const shipTo = variant.supplierCostShipTo?.value ?? "";
+  const supplierUrl = variant.supplierUrl?.value ?? "";
+  if (
+    !/^\d+(\.\d{1,6})?$/.test(amount) ||
+    Number(amount) <= 0 ||
+    currency !== "USD" ||
+    source !== "dsers_mcp_snapshot" ||
+    !capturedAt ||
+    !shipTo ||
+    !supplierUrl
+  ) {
+    return null;
+  }
+  try {
+    new URL(supplierUrl);
+  } catch {
+    return null;
+  }
+  return {
+    amount,
+    currency,
+    source,
+    capturedAt,
+    shipTo,
+    supplierUrl,
+  };
 }
 
 export function catalogProductsFromShopify(
@@ -121,12 +200,13 @@ export function catalogProductsFromShopify(
         inventoryQuantity: variant.inventoryQuantity ?? 0,
         status: "ACTIVE" as const,
         tags: product.tags,
+        supplierCost: supplierCostFromShopifyVariant(variant),
       },
     ];
   });
 }
 
-type ShopifyCatalogVariant =
+export type ShopifyCatalogVariant =
   ShopifyCatalogData["products"]["nodes"][number]["variants"]["nodes"][number];
 
 /**

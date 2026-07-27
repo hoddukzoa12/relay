@@ -21,7 +21,8 @@
           "amount",
           "buyerWallet",
           "txSignature",
-          "explorer"
+          "explorer",
+          "supplierOrder"
         ],
         "properties": {
           "shopifyOrderId": { "type": "string" },
@@ -33,8 +34,37 @@
           "amount": { "type": "string" },
           "buyerWallet": { "type": "string" },
           "txSignature": { "type": "string" },
-          "explorer": { "type": "string" }
+          "explorer": { "type": "string" },
+          "supplierOrder": { "$ref": "#/$defs/supplierOrder" }
         }
+      }
+    }
+  },
+  "$defs": {
+    "supplierOrder": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["provider", "status", "ref", "message"],
+      "properties": {
+        "provider": { "const": "dsers" },
+        "status": {
+          "enum": [
+            "disabled",
+            "blocked",
+            "not_connected",
+            "pending",
+            "submitted",
+            "confirmed",
+            "failed"
+          ]
+        },
+        "ref": {
+          "oneOf": [
+            { "type": "string", "minLength": 1 },
+            { "type": "null" }
+          ]
+        },
+        "message": { "type": "string", "minLength": 1 }
       }
     }
   }

@@ -28,8 +28,10 @@ Result:
 - Product: `TWS F9-5 Earphone Bluetooth 5.3 Wireless Headphones Hifi Stereo Sports Waterproof Earbuds Headset Hearing Aids With Mic Handfree`
 - Shopify variant: `gid://shopify/ProductVariant/59696201072926`
 - SKU: `14:193#black`
-- Catalog cost: `3.95 USD`
+- Shopify catalog price at the time: `3.95 USD`
+- DSers supplier-cost snapshot (captured later on 2026-07-27): `3.96 USD`
 - Paid amount after 15% markup: `4.54 USDC`
+- Projected gross margin against the DSers snapshot: `0.58 USDC` / `12.78%`
 - Order ref: `ord_c8c653475a704852a479a0c0acb5e5f9`
 - Payment reference: `BRU46emz7vXiKbhysvhpMkYy8kUoxSRGyjHgtmrHFMnp`
 - Transaction: `54nDbzuiuA4oJnuEtBMvEgVTVjr6r3bMs1aiDPQ5uRLc5gcAsXBXVgnrh4iNzNrvNn3e4oEEWQajYsRuJy3CipRf`
@@ -67,6 +69,9 @@ cd agents && ./.venv/bin/python -m pytest -q
                                           42 passed
 ```
 
-The commerce tests include a forced `KRW` mismatch that throws before an order
+The original run treated the Shopify catalog price as sourcing cost. Issue #52
+corrected that evidence by persisting the DSers per-variant supplier snapshot;
+see [`issue-52-dsers-mcp.md`](issue-52-dsers-mcp.md). The commerce tests include
+a forced `KRW` mismatch that throws before an order
 payload can be created, Shopify currency cache/refresh behavior, sellable
 variant selection, and variant/SKU order binding.

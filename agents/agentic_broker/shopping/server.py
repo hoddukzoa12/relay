@@ -135,6 +135,7 @@ def _handle_intent(message: dict[str, Any], data: dict[str, Any]) -> dict[str, A
             query=intent.natural_language_description,
             budget=intent.price_ceiling,
             shipTo=intent.ship_to,
+            shippingAddress=intent.shipping_address,
         )
     )
     quote_identity = broker.catalog_identity(payment_request.orderRef)
@@ -333,7 +334,7 @@ def settle(
             req,
             identity_wallet=x_relay_authenticated_wallet,
         )
-    except broker.FulfillmentPendingError as exc:
+    except broker.OrderRecordingPendingError as exc:
         raise HTTPException(status_code=503, detail=str(exc)) from exc
 
 
@@ -361,6 +362,8 @@ def refund_order(identifier: str) -> RefundResult:
 def fulfill_order(order_ref: str) -> FulfillmentResult:
     try:
         return FulfillmentResult(**tools.fulfill_order(order_ref))
+    except service_clients.ServiceRequestError as exc:
+        raise HTTPException(status_code=exc.status_code, detail=str(exc)) from exc
     except ValueError as exc:
         raise HTTPException(status_code=409, detail=str(exc)) from exc
     except Exception as exc:  # noqa: BLE001
@@ -371,6 +374,8 @@ def fulfill_order(order_ref: str) -> FulfillmentResult:
 def tracking(identifier: str) -> TrackingInfo:
     try:
         return TrackingInfo(**tools.track_order(identifier))
+    except service_clients.ServiceRequestError as exc:
+        raise HTTPException(status_code=exc.status_code, detail=str(exc)) from exc
     except ValueError as exc:
         raise HTTPException(status_code=409, detail=str(exc)) from exc
     except Exception as exc:  # noqa: BLE001

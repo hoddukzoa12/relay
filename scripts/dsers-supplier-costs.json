@@ -1,0 +1,166 @@
+{
+  "source": "dsers_mcp_snapshot",
+  "capturedAt": "2026-07-27",
+  "currency": "USD",
+  "shipFrom": "CN",
+  "shipTo": "US",
+  "vendor": "SolanaGCP",
+  "products": [
+    {
+      "shopifyProductId": "gid://shopify/Product/15839547556126",
+      "supplierProductId": "1005007183896560",
+      "dsersProductId": "2081558030203617280",
+      "supplierUrl": "https://www.aliexpress.com/item/1005007183896560.html",
+      "variants": [
+        {
+          "shopifyVariantId": "gid://shopify/ProductVariant/59696201072926",
+          "sku": "14:193#black",
+          "cost": "3.96",
+          "supplierInventory": 1225
+        }
+      ]
+    },
+    {
+      "shopifyProductId": "gid://shopify/Product/15839549587742",
+      "supplierProductId": "1005007935748528",
+      "dsersProductId": "2081558400648478720",
+      "supplierUrl": "https://www.aliexpress.com/item/1005007935748528.html",
+      "variants": [
+        {
+          "shopifyVariantId": "gid://shopify/ProductVariant/59696203366686",
+          "sku": "14:193#Black",
+          "cost": "4.09",
+          "supplierInventory": 847
+        },
+        {
+          "shopifyVariantId": "gid://shopify/ProductVariant/59696203399454",
+          "sku": "14:175#Green",
+          "cost": "4.66",
+          "supplierInventory": 31
+        },
+        {
+          "shopifyVariantId": "gid://shopify/ProductVariant/59696203432222",
+          "sku": "14:1052#Pink",
+          "cost": "4.27",
+          "supplierInventory": 18
+        },
+        {
+          "shopifyVariantId": "gid://shopify/ProductVariant/59696203464990",
+          "sku": "14:173#Blue",
+          "cost": "4.69",
+          "supplierInventory": 0
+        },
+        {
+          "shopifyVariantId": "gid://shopify/ProductVariant/59696203497758",
+          "sku": "14:29#White",
+          "cost": "4.62",
+          "supplierInventory": 12
+        }
+      ]
+    },
+    {
+      "shopifyProductId": "gid://shopify/Product/15839549063454",
+      "supplierProductId": "1005012260342939",
+      "dsersProductId": "2081558309787205632",
+      "supplierUrl": "https://www.aliexpress.com/item/1005012260342939.html",
+      "variants": [
+        {
+          "shopifyVariantId": "gid://shopify/ProductVariant/59696202809630",
+          "sku": "14:10#White",
+          "cost": "3.67",
+          "supplierInventory": 29
+        },
+        {
+          "shopifyVariantId": "gid://shopify/ProductVariant/59696202842398",
+          "sku": "14:29#Black",
+          "cost": "3.69",
+          "supplierInventory": 12
+        }
+      ]
+    },
+    {
+      "shopifyProductId": "gid://shopify/Product/15839548014878",
+      "supplierProductId": "1005012381320880",
+      "dsersProductId": "2081558122490494976",
+      "supplierUrl": "https://www.aliexpress.com/item/1005012381320880.html",
+      "variants": [
+        {
+          "shopifyVariantId": "gid://shopify/ProductVariant/59696201564446",
+          "sku": "14:193#black",
+          "cost": "3.64",
+          "supplierInventory": 1
+        },
+        {
+          "shopifyVariantId": "gid://shopify/ProductVariant/59696201597214",
+          "sku": "14:29#white",
+          "cost": "3.64",
+          "supplierInventory": 15
+        }
+      ]
+    },
+    {
+      "shopifyProductId": "gid://shopify/Product/15839546343710",
+      "supplierProductId": "1005010512265875",
+      "dsersProductId": "2081557842525028352",
+      "supplierUrl": "https://www.aliexpress.com/item/1005010512265875.html",
+      "variants": [
+        {
+          "shopifyVariantId": "gid://shopify/ProductVariant/59696199041310",
+          "sku": "14:173#blue",
+          "cost": "3.91",
+          "supplierInventory": 483
+        },
+        {
+          "shopifyVariantId": "gid://shopify/ProductVariant/59696199074078",
+          "sku": "14:193#black",
+          "cost": "3.88",
+          "supplierInventory": 48
+        },
+        {
+          "shopifyVariantId": "gid://shopify/ProductVariant/59696199106846",
+          "sku": "14:10#khaki",
+          "cost": "3.85",
+          "supplierInventory": 8
+        },
+        {
+          "shopifyVariantId": "gid://shopify/ProductVariant/59696199139614",
+          "sku": "14:29#white",
+          "cost": "3.88",
+          "supplierInventory": 2
+        },
+        {
+          "shopifyVariantId": "gid://shopify/ProductVariant/59696199172382",
+          "sku": "14:496#purple",
+          "cost": "3.91",
+          "supplierInventory": 472
+        },
+        {
+          "shopifyVariantId": "gid://shopify/ProductVariant/59696199205150",
+          "sku": "14:1052#pink",
+          "cost": "3.91",
+          "supplierInventory": 482
+        }
+      ]
+    },
+    {
+      "shopifyProductId": "gid://shopify/Product/15839545819422",
+      "supplierProductId": "1005007445958669",
+      "dsersProductId": "2081557750430892032",
+      "supplierUrl": "https://www.aliexpress.com/item/1005007445958669.html",
+      "variants": [
+        {
+          "shopifyVariantId": "gid://shopify/ProductVariant/59696198418718",
+          "sku": "14:29#One Black",
+          "cost": "1.85",
+          "supplierInventory": 168
+        },
+        {
+          "shopifyVariantId": "gid://shopify/ProductVariant/59696198451486",
+          "sku": "14:173#One White",
+          "cost": "1.92",
+          "supplierInventory": 47
+        }
+      ]
+    }
+  ]
+}

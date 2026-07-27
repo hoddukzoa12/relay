@@ -7,6 +7,12 @@ Format: [Keep a Changelog](https://keepachangelog.com/); versioning is SemVer-is
 ## [Unreleased]
 
 ### Added
+- Added Admin-only, per-variant DSers supplier-cost snapshots, projected margin
+  evidence on the private Shopify order ledger, structured shipping-address
+  contracts, and a mirrored supplier-order state (#52).
+- Added a default-off supplier-fulfillment money gate: only an explicit enable
+  plus a complete buyer-supplied address emits Shopify `shippingAddress` for
+  the store's DSers/AliExpress auto-ordering integration (#52).
 - Added an API-key-protected, stateless Streamable HTTP MCP server with seven
   thin commerce/payment/lifecycle tools, a reproducible MCP client, and
   scale-to-zero Cloud Run deployment wiring (#17).
@@ -19,9 +25,9 @@ Format: [Keep a Changelog](https://keepachangelog.com/); versioning is SemVer-is
   cached-JWKS session verification, one-signature human AP2 delegation, and
   signed-in-wallet Shopify order lookup (#29).
 - Added the agent-owned post-purchase lifecycle: single-order status lookup,
-  idempotent Shopify fulfillment with explicit demo tracking, and a full
-  merchant-to-buyer on-chain USDC refund with bidirectional explorer proof
-  (#26).
+  the original explicitly synthetic fulfillment experiment (removed from the
+  live path by #52), and a full merchant-to-buyer on-chain USDC refund with
+  bidirectional explorer proof (#26).
 - Added the Shopify landing-page chat storefront with live catalog cards,
   client-side multi-turn state, autonomous `/buy` settlement progress, and
   inline Solana explorer plus Shopify order proof (#39, Phase 1).
@@ -30,6 +36,9 @@ Format: [Keep a Changelog](https://keepachangelog.com/); versioning is SemVer-is
   walletless autonomous agents (#43).
 
 ### Changed
+- Disabled synthetic fulfillment/tracking from the live order path: until a
+  real supplier order and shipment exist, those endpoints return `409` and no
+  order reference or tracking number is fabricated (#52).
 - Grounded sourcing in in-stock, within-budget Shopify variants, carried the
   real SKU/variant through CartMandate, and linked Shopify orders to the real
   variant while preserving the broker resale price (#25).

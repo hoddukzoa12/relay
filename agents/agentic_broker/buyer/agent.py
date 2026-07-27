@@ -11,6 +11,10 @@ from google.adk.agents import LlmAgent
 from google.adk.tools import ToolContext
 
 from ..common.config import settings
+from ..common.contracts import (
+    StructuredShippingAddress,
+    format_shipping_address,
+)
 from . import tools as buyer_tools
 
 INSTRUCTION = """\
@@ -19,9 +23,12 @@ multi-turn memory and must use tools for every catalog, payment, and order fact.
 Never invent products, stock, prices, order IDs, or transaction proofs.
 
 Conversation policy:
-1. A usable shopping request needs both a positive maximum budget in USDC and a
-   shipping address. If either is missing, ask a short follow-up question. Do
-   not silently substitute a default.
+1. A usable shopping request needs a positive maximum budget in USDC and a
+   complete buyer-supplied structured shipping address: recipient name,
+   address1, city, Shopify-compatible province/state code, ISO-2 country code,
+   and postal/ZIP code.
+   Address2 and phone are optional. Ask short follow-up questions for every
+   missing required field. Never infer, default, or invent address values.
 2. Once both are known, call `search_catalog`. Compare up to three suitable
    candidates in your own concise words, including meaningful price and stock
    differences. Use the exact tool results. For follow-ups such as "anything
@@ -32,8 +39,9 @@ Conversation policy:
    "buy it", "choose the cheapest", or "go ahead". A fully explicit initial
    command beginning with "buy" also counts as delegation.
 4. After explicit delegation, call `request_quote` with the exact selected
-   product title as the query, the user's maximum budget, and their shipping
-   address. If the quote exceeds the budget, stop and explain.
+   product title as the query, the user's maximum budget, the legacy one-line
+   destination, and every structured address field. If the quote exceeds the
+   budget, stop and explain.
 5. Otherwise call `authorize_payment` with the quote's payTo, price.amount, and
    reference. This signs and sends USDC autonomously; never ask for a wallet
    click or send the human to Shopify checkout.
@@ -42,8 +50,9 @@ Conversation policy:
 7. Only say a purchase completed when settlement status is exactly "paid".
    Include the product, amount, Shopify order ID, and Solana explorer link.
 8. For order questions, call `get_order_status` with an orderRef or Shopify
-   order name. Keep demo tracking claims clearly labeled if present, and never
-   promise proactive notifications or future actions you cannot perform.
+   order name. State `supplierOrder.status` and its message exactly. Never imply
+   that Shopify fulfillment or a demo value represents a real supplier order or
+   parcel, and never promise future actions you cannot perform.
 
 Be natural and concise. Use plain text only, without Markdown. The user should
 see your own response text alongside structured product cards or payment
@@ -68,9 +77,47 @@ def request_quote(
     budget: float,
     ship_to: str,
     tool_context: ToolContext,
+    shipping_name: str = "",
+    address1: str = "",
+    city: str = "",
+    province: str = "",
+    country: str = "",
+    zip_code: str = "",
+    address2: str = "",
+    phone: str = "",
 ) -> dict[str, Any]:
     """Request an agent-native quote for an explicitly selected product."""
-    quote = buyer_tools.request_quote(query, budget, ship_to)
+    required = {
+        "shipping_name": shipping_name,
+        "address1": address1,
+        "city": city,
+        "province": province,
+        "country": country,
+        "zip_code": zip_code,
+    }
+    missing = [name for name, value in required.items() if not value.strip()]
+    if missing:
+        raise ValueError(
+            "Complete buyer-supplied shipping address required; missing "
+            + ", ".join(missing)
+        )
+    shipping_address = StructuredShippingAddress(
+        name=shipping_name.strip(),
+        address1=address1.strip(),
+        address2=address2.strip() or None,
+        city=city.strip(),
+        province=province.strip(),
+        country=country.strip().upper(),
+        zip=zip_code.strip(),
+        phone=phone.strip() or None,
+    )
+    ship_to = format_shipping_address(shipping_address)
+    quote = buyer_tools.request_quote(
+        query,
+        budget,
+        ship_to,
+        shipping_address=shipping_address,
+    )
     quoted_amount = Decimal(str(quote["price"]["amount"]))
     ceiling = Decimal(str(budget))
     if quoted_amount > ceiling:
@@ -79,6 +126,9 @@ def request_quote(
         )
     tool_context.state["relay:last_budget"] = budget
     tool_context.state["relay:last_ship_to"] = ship_to
+    tool_context.state["relay:last_shipping_address"] = (
+        shipping_address.model_dump(exclude_none=True)
+    )
     tool_context.state["relay:last_quote"] = quote
     return quote
 

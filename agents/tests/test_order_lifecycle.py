@@ -3,6 +3,10 @@ from __future__ import annotations
 import unittest
 from unittest.mock import patch
 
+from fastapi.testclient import TestClient
+
+from agentic_broker.common import service_clients
+from agentic_broker.shopping import server
 from agentic_broker.shopping import tools
 
 
@@ -36,6 +40,12 @@ def order_status(
                 else None
             ),
         },
+        "supplierOrder": {
+            "provider": "dsers",
+            "status": "disabled",
+            "ref": None,
+            "message": "Supplier fulfillment is disabled.",
+        },
         "tracking": None,
     }
 
@@ -52,6 +62,8 @@ class OrderLifecycleToolsTest(unittest.TestCase):
         lookup.assert_called_once_with("#1006")
         self.assertEqual(result["lineItems"][0]["sku"], "RELAY-EARBUDS")
         self.assertEqual(result["payment"]["txSignature"], "payment-signature")
+        self.assertEqual(result["supplierOrder"]["status"], "disabled")
+        self.assertIsNone(result["supplierOrder"]["ref"])
 
     def test_refund_orchestrates_onchain_before_shopify_and_replays(self) -> None:
         refunded = order_status(
@@ -116,6 +128,24 @@ class OrderLifecycleToolsTest(unittest.TestCase):
         ):
             with self.assertRaisesRegex(ValueError, "predates recorded"):
                 tools.refund_order("ord_123")
+
+    def test_supplier_refusals_preserve_http_409_through_shopping_agent(self) -> None:
+        refusal = service_clients.ServiceRequestError(
+            409,
+            "Supplier fulfillment is disabled.",
+        )
+        client = TestClient(server.app)
+        with (
+            patch.object(tools, "fulfill_order", side_effect=refusal),
+            patch.object(tools, "track_order", side_effect=refusal),
+        ):
+            fulfill = client.post("/orders/ord_123/fulfill")
+            tracking = client.get("/orders/ord_123/tracking")
+
+        self.assertEqual(fulfill.status_code, 409)
+        self.assertEqual(tracking.status_code, 409)
+        self.assertIn("fulfillment is disabled", fulfill.json()["detail"])
+        self.assertIn("fulfillment is disabled", tracking.json()["detail"])
 
 
 if __name__ == "__main__":

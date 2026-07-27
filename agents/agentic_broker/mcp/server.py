@@ -21,6 +21,7 @@ from starlette.types import ASGIApp
 from ..buyer import tools as buyer_tools
 from ..common import service_clients
 from ..common.config import settings
+from ..common.contracts import StructuredShippingAddress
 from . import auth
 
 
@@ -39,16 +40,26 @@ def search_products(query: str, limit: int = 20) -> dict[str, Any]:
     return service_clients.commerce_products(query, limit)
 
 
-def request_quote(query: str, budget: float, ship_to: str) -> dict[str, Any]:
+def request_quote(
+    query: str,
+    budget: float,
+    ship_to: str,
+    shipping_address: dict[str, str] | None = None,
+) -> dict[str, Any]:
     """Request a product quote and agent-native Solana Pay payment request."""
     if budget <= 0:
         raise ValueError("budget must be positive")
+    kwargs: dict[str, Any] = {"delegator": auth.current_wallet()}
+    if shipping_address:
+        kwargs["shipping_address"] = StructuredShippingAddress(
+            **shipping_address
+        )
     try:
         return buyer_tools.request_quote(
             query,
             budget,
             ship_to,
-            delegator=auth.current_wallet(),
+            **kwargs,
         )
     except buyer_tools.DelegationApprovalRequiredError as exc:
         return exc.response

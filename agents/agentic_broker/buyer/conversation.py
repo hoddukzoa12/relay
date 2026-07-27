@@ -13,6 +13,10 @@ from google.adk.sessions import InMemorySessionService
 from google.genai import types
 
 from ..common.config import settings
+from ..common.contracts import (
+    StructuredShippingAddress,
+    format_shipping_address,
+)
 from . import flow
 from . import tools as buyer_tools
 from .agent import root_agent
@@ -72,6 +76,9 @@ class _FallbackState:
     query: str = ""
     budget: float = settings.default_budget_usdc
     products: list[dict[str, Any]] = field(default_factory=list)
+    shipping_address: StructuredShippingAddress | None = None
+    address_fields: dict[str, str] = field(default_factory=dict)
+    pending_product: dict[str, Any] | None = None
 
 
 class ConversationService:
@@ -256,10 +263,15 @@ class ConversationService:
                 or quote.get("orderRef")
             )
             amount = quote.get("price", {}).get("amount", "")
+            supplier = confirmation.get("supplierOrder", {})
+            supplier_status = str(
+                supplier.get("status", "disabled")
+            ).replace("_", " ")
             return (
-                f"Purchase complete for {quote.get('title', 'the selected item')} "
+                f"Payment complete for {quote.get('title', 'the selected item')} "
                 f"at {amount} USDC. Shopify order {order_id} was recorded after "
-                "on-chain verification."
+                f"on-chain verification. Supplier order is {supplier_status}; "
+                f"{supplier.get('message', 'no supplier tracking is available.')}"
             )
         if payment.get("txSignature"):
             return (
@@ -272,10 +284,16 @@ class ConversationService:
                 "quote, but the model became unavailable before any payment was sent."
             )
         if order:
+            supplier = order.get("supplierOrder", {})
+            supplier_status = str(
+                supplier.get("status", "disabled")
+            ).replace("_", " ")
             return (
                 f"Order {order.get('name') or order.get('orderRef')} is "
                 f"{order.get('financialStatus', 'available')} with fulfillment "
-                f"status {order.get('fulfillmentStatus', 'unknown')}."
+                f"status {order.get('fulfillmentStatus', 'unknown')}; supplier "
+                f"order is {supplier_status}. "
+                f"{supplier.get('message', 'No supplier tracking is available.')}"
             )
         products = search.get("products", [])
         if products:
@@ -294,15 +312,51 @@ class ConversationService:
     ) -> dict[str, Any]:
         state = self._fallback_states.setdefault(session_id, _FallbackState())
         normalized = message.lower()
+        state.address_fields.update(self._structured_shipping_fields(message))
+        parsed_address = self._complete_shipping_address(state.address_fields)
+        if parsed_address:
+            state.shipping_address = parsed_address
+        elif state.pending_product is not None and not self._is_purchase_request(
+            normalized
+        ):
+            return {
+                "sessionId": session_id,
+                "reply": self._structured_address_prompt(state.address_fields),
+                "mode": "fallback",
+                "fallbackReason": reason[:240],
+                "toolCalls": [],
+                "products": state.products,
+                "shippingAddressRequired": True,
+            }
 
-        if state.products and self._is_purchase_request(normalized):
-            product = self._fallback_selection(message, state.products)
-            ship_to = self._shipping_address(message)
+        resume_pending = state.pending_product is not None and parsed_address is not None
+        if state.products and (
+            self._is_purchase_request(normalized) or resume_pending
+        ):
+            product = state.pending_product or self._fallback_selection(
+                message, state.products
+            )
+            if state.shipping_address is None:
+                state.pending_product = product
+                return {
+                    "sessionId": session_id,
+                    "reply": self._structured_address_prompt(
+                        state.address_fields
+                    ),
+                    "mode": "fallback",
+                    "fallbackReason": reason[:240],
+                    "toolCalls": [],
+                    "products": state.products,
+                    "shippingAddressRequired": True,
+                }
+            state.pending_product = None
+            ship_to = format_shipping_address(state.shipping_address)
             try:
                 result = flow.buy(
                     query=str(product["title"]),
                     budget=state.budget,
                     ship_to=ship_to,
+                    shipping_address=state.shipping_address,
                 )
             except PermissionError as exc:
                 return {
@@ -320,11 +374,13 @@ class ConversationService:
             quote = result.get("quote", {})
             confirmation = result.get("confirmation", {})
             if result.get("ok"):
+                supplier = confirmation.get("supplierOrder", {})
                 reply = (
-                    f"Purchase complete for {quote.get('title', product['title'])} "
+                    f"Payment complete for {quote.get('title', product['title'])} "
                     f"at {quote.get('price', {}).get('amount', '')} USDC. "
                     f"Shopify order {confirmation.get('shopifyOrderId') or confirmation.get('orderRef')} "
-                    "was recorded after on-chain verification."
+                    "was recorded after on-chain verification. "
+                    f"{supplier.get('message', 'Supplier status is unavailable.')}"
                 )
             else:
                 reply = (
@@ -363,6 +419,7 @@ class ConversationService:
         state.query = message
         state.budget = budget
         state.products = products
+        state.pending_product = None
         if products:
             reply = (
                 f"I found {len(products)} in-stock catalog "
@@ -425,13 +482,65 @@ class ConversationService:
         return products[0]
 
     @staticmethod
-    def _shipping_address(message: str) -> str:
-        match = re.search(
-            r"\bship(?:ping)?\s+to\s+(.+?)(?:[.!?]|$)",
+    def _structured_address_prompt(fields: dict[str, str]) -> str:
+        required = ("name", "address1", "city", "province", "country", "zip")
+        missing = [field for field in required if not fields.get(field)]
+        missing_text = (
+            ", ".join(missing)
+            if missing
+            else "one or more invalid values (country must be ISO-2)"
+        )
+        return (
+            "Before payment, provide the real shipping fields exactly as "
+            "'Name: ...; Address1: ...; City: ...; Province: ...; "
+            "Country: KR; ZIP: ...'. Address2 and Phone are optional. "
+            f"Missing or invalid: {missing_text}. "
+            "I will not invent missing address values."
+        )
+
+    @staticmethod
+    def _structured_shipping_fields(message: str) -> dict[str, str]:
+        aliases = {
+            "name": "name",
+            "recipient": "name",
+            "address1": "address1",
+            "address 1": "address1",
+            "address2": "address2",
+            "address 2": "address2",
+            "city": "city",
+            "province": "province",
+            "state": "province",
+            "country": "country",
+            "zip": "zip",
+            "postal": "zip",
+            "postal code": "zip",
+            "phone": "phone",
+        }
+        field_names = "|".join(
+            sorted((re.escape(name) for name in aliases), key=len, reverse=True)
+        )
+        values: dict[str, str] = {}
+        for match in re.finditer(
+            rf"(?:^|[;\n])\s*({field_names})\s*[:=]\s*([^;\n]+)",
             message,
             flags=re.IGNORECASE,
-        )
-        return match.group(1).strip() if match else settings.default_ship_to
+        ):
+            key = aliases[match.group(1).lower()]
+            values[key] = match.group(2).strip()
+        return values
+
+    @staticmethod
+    def _complete_shipping_address(
+        values: dict[str, str],
+    ) -> StructuredShippingAddress | None:
+        required = {"name", "address1", "city", "province", "country", "zip"}
+        if not required.issubset(values):
+            return None
+        normalized = {**values, "country": values["country"].upper()}
+        try:
+            return StructuredShippingAddress(**normalized)
+        except ValueError:
+            return None
 
 
 _SERVICE = ConversationService()

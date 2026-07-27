@@ -124,10 +124,10 @@ def test_mcp_tools_are_thin_service_wrappers(monkeypatch) -> None:
 
     assert calls == [
         ("search_products", ("earbuds", 5, {})),
-        (
-            "request_quote",
-            ("earbuds", 5.0, "Seoul", {"delegator": None}),
-        ),
+            (
+                "request_quote",
+                ("earbuds", 5.0, "Seoul", {"delegator": None}),
+            ),
         (
             "authorize_payment",
             ("merchant", "3.45", "reference", {"delegator": None}),

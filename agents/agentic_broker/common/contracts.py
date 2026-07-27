@@ -3,7 +3,7 @@ from __future__ import annotations
 
 from typing import Literal, Optional
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, field_validator
 
 Network = Literal["solana-devnet", "solana-mainnet"]
 PaymentStatus = Literal["pending", "paid", "expired", "invalid"]
@@ -29,12 +29,84 @@ class Money(BaseModel):
     currency: Literal["USDC"] = "USDC"
 
 
+class StructuredShippingAddress(BaseModel):
+    """Buyer-supplied destination; never synthesize missing supplier fields."""
+
+    name: str = Field(min_length=1)
+    address1: str = Field(min_length=1)
+    address2: Optional[str] = Field(default=None, min_length=1)
+    city: str = Field(min_length=1)
+    province: str = Field(min_length=1)
+    country: str = Field(pattern=r"^[A-Z]{2}$")
+    zip: str = Field(min_length=3)
+    phone: Optional[str] = Field(default=None, min_length=5)
+
+    @field_validator(
+        "name",
+        "address1",
+        "address2",
+        "city",
+        "province",
+        "zip",
+        "phone",
+    )
+    @classmethod
+    def reject_placeholders(cls, value: Optional[str]) -> Optional[str]:
+        if value is None:
+            return value
+        if value != value.strip():
+            raise ValueError("shipping address values must be trimmed")
+        if value.lower() in {
+            "n/a",
+            "na",
+            "none",
+            "unknown",
+            "test",
+            "testing",
+            "placeholder",
+            "todo",
+            "tbd",
+            "-",
+        }:
+            raise ValueError("placeholder shipping address values are forbidden")
+        return value
+
+
+def format_shipping_address(address: StructuredShippingAddress) -> str:
+    """Create the retained free-text representation from structured truth."""
+    return ", ".join(
+        value
+        for value in (
+            address.name,
+            address.address1,
+            address.address2,
+            address.city,
+            address.province,
+            address.zip,
+            address.country,
+        )
+        if value
+    )
+
+
 class PurchaseIntent(BaseModel):
     """A2A — buyer -> shopping (Step 1)."""
 
     query: str
     budget: Money
     shipTo: str
+    shippingAddress: Optional[StructuredShippingAddress] = None
+
+
+class SupplierCostSnapshot(BaseModel):
+    """Admin-only, dated DSers supplier-cost evidence for one exact variant."""
+
+    amount: str = Field(pattern=r"^\d+(\.\d{1,6})?$")
+    currency: Literal["USD"] = "USD"
+    source: Literal["dsers_mcp_snapshot", "relay_demo_catalog"]
+    capturedAt: str = Field(min_length=1)
+    shipTo: str = Field(min_length=2)
+    supplierUrl: Optional[str] = None
 
 
 class CatalogProduct(BaseModel):
@@ -49,6 +121,36 @@ class CatalogProduct(BaseModel):
     inventoryQuantity: int
     status: Literal["ACTIVE"]
     tags: list[str]
+    supplierCost: Optional[SupplierCostSnapshot] = None
+
+
+def _disabled_supplier_order() -> "SupplierOrder":
+    return SupplierOrder(
+        provider="dsers",
+        status="disabled",
+        ref=None,
+        message=(
+            "Supplier fulfillment is disabled; no structured Shopify "
+            "shipping address or supplier order was created."
+        ),
+    )
+
+
+class SupplierOrder(BaseModel):
+    """Supplier state; pending may precede a downstream reference readback."""
+
+    provider: Literal["dsers"] = "dsers"
+    status: Literal[
+        "disabled",
+        "blocked",
+        "not_connected",
+        "pending",
+        "submitted",
+        "confirmed",
+        "failed",
+    ]
+    ref: Optional[str] = Field(default=None, min_length=1)
+    message: str = Field(min_length=1)
 
 
 class CatalogProductsResponse(BaseModel):
@@ -66,6 +168,9 @@ class WalletOrder(BaseModel):
     buyerWallet: str
     txSignature: str
     explorer: str
+    supplierOrder: SupplierOrder = Field(
+        default_factory=_disabled_supplier_order
+    )
 
 
 class WalletOrdersResponse(BaseModel):
@@ -95,7 +200,7 @@ class RefundState(BaseModel):
 
 
 class TrackingInfo(BaseModel):
-    provider: Literal["easypost"]
+    provider: Literal["shopify", "easypost"]
     carrier: str = Field(min_length=1)
     trackingNumber: str = Field(min_length=1)
     status: str = Field(min_length=1)
@@ -116,6 +221,9 @@ class OrderStatus(BaseModel):
     amount: Money
     payment: PaymentProof
     refund: RefundState
+    supplierOrder: SupplierOrder = Field(
+        default_factory=_disabled_supplier_order
+    )
     tracking: Optional[TrackingInfo] = None
 
 
@@ -210,6 +318,7 @@ class IntentMandate(BaseModel):
     requires_refundability: Optional[bool] = False
     price_ceiling: Money
     ship_to: str
+    shipping_address: Optional[StructuredShippingAddress] = None
     intent_expiry: str
     # Present when a signed-in human delegates; absent on the legacy agent-only
     # path, where the configured payments buyer wallet remains the signer.
@@ -289,6 +398,9 @@ class OrderConfirmation(BaseModel):
     txSignature: Optional[str] = None
     explorer: Optional[str] = None
     shopifyOrderId: Optional[str] = None
+    supplierOrder: SupplierOrder = Field(
+        default_factory=_disabled_supplier_order
+    )
 
 
 class VerificationResult(BaseModel):

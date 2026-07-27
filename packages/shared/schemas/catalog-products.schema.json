@@ -21,7 +21,8 @@
           "price",
           "inventoryQuantity",
           "status",
-          "tags"
+          "tags",
+          "supplierCost"
         ],
         "properties": {
           "productId": { "type": "string" },
@@ -38,7 +39,45 @@
           "tags": {
             "type": "array",
             "items": { "type": "string" }
+          },
+          "supplierCost": {
+            "oneOf": [
+              { "$ref": "#/$defs/supplierCostSnapshot" },
+              { "type": "null" }
+            ]
           }
+        }
+      }
+    }
+  },
+  "$defs": {
+    "supplierCostSnapshot": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "amount",
+        "currency",
+        "source",
+        "capturedAt",
+        "shipTo",
+        "supplierUrl"
+      ],
+      "properties": {
+        "amount": {
+          "type": "string",
+          "pattern": "^\\d+(\\.\\d{1,6})?$"
+        },
+        "currency": { "const": "USD" },
+        "source": {
+          "enum": ["dsers_mcp_snapshot", "relay_demo_catalog"]
+        },
+        "capturedAt": { "type": "string", "minLength": 1 },
+        "shipTo": { "type": "string", "minLength": 2 },
+        "supplierUrl": {
+          "oneOf": [
+            { "type": "string", "format": "uri" },
+            { "type": "null" }
+          ]
         }
       }
     }
