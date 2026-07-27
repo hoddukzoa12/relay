@@ -495,6 +495,8 @@
       this.cluster = "devnet";
       this.walletAddress = "";
       this.sessionKey = `relay-agent-chat:${window.location.pathname}`;
+      this.agentSessionKey = `relay-agent-session:${window.location.pathname}`;
+      this.agentSessionId = this.loadAgentSessionId();
 
       this.attachShadow({ mode: "open" }).append(view.content.cloneNode(true));
       this.$ = (selector) => this.shadowRoot.querySelector(selector);
@@ -508,7 +510,7 @@
       if (!this.restoreHistory()) {
         this.appendMessage(
           "agent",
-          "What are you looking for? I’ll search this store’s live catalog first. You stay in control until you choose an item or delegate the choice.",
+          "What are you looking for? Tell me your budget and shipping destination, and I’ll compare this store’s live catalog. You stay in control until you choose an item or delegate the choice.",
         );
       }
       this.loadWallet();
@@ -528,6 +530,19 @@
         return Array.isArray(parsed) ? parsed : [];
       } catch {
         return [];
+      }
+    }
+
+    loadAgentSessionId() {
+      try {
+        const saved = sessionStorage.getItem(this.agentSessionKey);
+        if (saved && /^[A-Za-z0-9][A-Za-z0-9_-]{7,127}$/.test(saved)) return saved;
+        const generated = globalThis.crypto?.randomUUID?.().replaceAll("-", "") ||
+          `relay${Date.now().toString(36)}${Math.random().toString(36).slice(2)}`;
+        sessionStorage.setItem(this.agentSessionKey, generated);
+        return generated;
+      } catch {
+        return `relay${Date.now().toString(36)}${Math.random().toString(36).slice(2)}`;
       }
     }
 
@@ -681,6 +696,7 @@
     }
 
     productPrice(product) {
+      if (Number.isFinite(product?.agentPrice)) return product.agentPrice;
       return Number(product.priceCents || 0) / 100;
     }
 
@@ -749,7 +765,112 @@
       if (!text) return;
       input.value = "";
       this.appendMessage("user", text);
+      await this.sendChat(text);
+    }
 
+    async sendChat(text) {
+      if (this.busy) return;
+      this.setBusy(true);
+      let result;
+      try {
+        result = await this.fetchJson("/chat", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            sessionId: this.agentSessionId,
+            message: text,
+          }),
+        });
+      } catch (error) {
+        // A preview theme can briefly point at the previous buyer revision while
+        // a new API revision awaits coordinator-approved deployment. Preserve
+        // the original deterministic search/payment path during that window.
+        this.setBusy(false);
+        await this.legacyTurn(text, error);
+        return;
+      }
+
+      try {
+        this.renderChatResponse(result);
+      } catch (error) {
+        // Never retry a successful /chat call through /buy: the model may have
+        // already sent payment, and a display failure must not spend twice.
+        this.appendMessage(
+          "agent",
+          `The agent response could not be displayed: ${this.errorMessage(error)}`,
+        );
+      } finally {
+        this.setBusy(false);
+        this.$("#prompt").focus();
+        this.scrollToLatest();
+      }
+    }
+
+    renderChatResponse(result) {
+      const reply = String(result?.reply || "").trim();
+      if (!reply) throw new Error("The buyer agent returned no reply.");
+      const { body } = this.appendMessage("agent", reply);
+      const products = (Array.isArray(result.products) ? result.products : [])
+        .map((product) => this.normalizeAgentProduct(product));
+      this.lastCandidates = products;
+      const parsedBudget = Number(result?.search?.budget);
+      if (Number.isFinite(parsedBudget) && parsedBudget > 0) {
+        this.lastIntent = { budget: parsedBudget };
+      }
+
+      if (products.length) {
+        const cards = document.createElement("div");
+        cards.className = "cards";
+        products.slice(0, 3).forEach((product) =>
+          cards.append(this.productCard(product, this.lastIntent?.budget)),
+        );
+        body.append(cards);
+      }
+
+      if (result?.quote || result?.payment || result?.confirmation) {
+        const budget = this.lastIntent?.budget ||
+          Number(result?.quote?.price?.amount) ||
+          0;
+        const progress = this.createProgressElement(body, budget);
+        this.renderResult(progress, result, budget, { appendSummary: false });
+      }
+      this.scrollToLatest();
+    }
+
+    normalizeAgentProduct(product) {
+      const local = this.catalog.find(
+        (candidate) =>
+          product?.title && String(candidate.title) === String(product.title),
+      ) || this.catalog.find(
+        (candidate) =>
+          product?.sku && String(candidate.sku) === String(product.sku),
+      ) || {};
+      const agentPrice = Number(product?.price);
+      const inventory = Number(product?.inventoryQuantity);
+      return {
+        ...local,
+        ...product,
+        image: local.image || product?.image || null,
+        url: local.url || product?.url || "",
+        handle: local.handle || product?.handle || "",
+        vendor: local.vendor || product?.vendor || "Shopify",
+        agentPrice: Number.isFinite(agentPrice) ? agentPrice : null,
+        inventoryQuantity: Number.isFinite(inventory) ? inventory : null,
+        available: Number.isFinite(inventory) ? inventory > 0 : Boolean(local.available),
+      };
+    }
+
+    async chooseProduct(product) {
+      if (this.busy || !product) return;
+      const budget = this.lastIntent?.budget || this.defaultBudget(product);
+      const instruction =
+        `Buy "${product.title}" within my maximum budget of ${budget.toFixed(2)} USDC ` +
+        `and ship to ${this.shipTo}.`;
+      this.appendMessage("user", instruction);
+      await this.sendChat(instruction);
+    }
+
+    async legacyTurn(text, chatError) {
       if (this.lastCandidates.length) {
         const requestedIndex = this.selectionIndex(text);
         if (requestedIndex != null && this.lastCandidates[requestedIndex]) {
@@ -762,10 +883,15 @@
         }
       }
       this.showCandidates(text);
+      const state = this.$("#wallet-state");
+      state.title = `Conversational API fallback: ${this.errorMessage(chatError)}`;
     }
 
     formatMoney(product) {
       const value = this.productPrice(product);
+      if (Number.isFinite(product.agentPrice)) {
+        return `${value.toFixed(2)} USDC`;
+      }
       try {
         return new Intl.NumberFormat(undefined, {
           style: "currency",
@@ -842,7 +968,9 @@
       }
       const stock = document.createElement("span");
       stock.className = "stock";
-      stock.textContent = product.available ? "In stock" : "Sold out";
+      stock.textContent = Number.isFinite(product.inventoryQuantity)
+        ? `${product.inventoryQuantity} left`
+        : product.available ? "In stock" : "Sold out";
       media.append(stock);
 
       const copy = document.createElement("div");
@@ -854,7 +982,7 @@
       price.textContent = this.formatMoney(product);
       const meta = document.createElement("span");
       meta.className = "catalog-meta";
-      meta.textContent = `${product.vendor || "Shopify"} catalog · final quote in USDC`;
+      meta.textContent = `${product.vendor || "Shopify"} live catalog · agent price`;
 
       const actions = document.createElement("div");
       actions.className = "card-actions";
@@ -864,7 +992,7 @@
       const overCap = budget != null && this.productPrice(product) > budget;
       choose.disabled = !product.available || overCap;
       choose.textContent = overCap ? "Over cap" : "Choose + pay";
-      choose.addEventListener("click", () => this.startPurchase(product, { budget }));
+      choose.addEventListener("click", () => this.chooseProduct(product));
 
       const detail = document.createElement("a");
       detail.className = "secondary";
@@ -886,6 +1014,10 @@
         "agent",
         `Delegation accepted for ${product.title}. The payment rail now runs autonomously; there are no wallet or Shopify checkout approval clicks.`,
       );
+      return this.createProgressElement(body, budget);
+    }
+
+    createProgressElement(body, budget) {
       const progress = document.createElement("section");
       progress.className = "progress";
       progress.setAttribute("aria-label", "Autonomous purchase progress");
@@ -916,7 +1048,13 @@
         </div>
       `;
       body.append(progress);
-      this.updateStep(progress, 1, "ACTIVE", `${budget.toFixed(2)} USDC CAP`);
+      const safeBudget = Number.isFinite(budget) ? budget : 0;
+      this.updateStep(
+        progress,
+        1,
+        "ACTIVE",
+        safeBudget > 0 ? `${safeBudget.toFixed(2)} USDC CAP` : "REQUESTING",
+      );
       this.scrollToLatest();
       return progress;
     }
@@ -950,7 +1088,7 @@
         : "";
     }
 
-    renderResult(progress, result, budget) {
+    renderResult(progress, result, budget, options = {}) {
       const quote = result?.quote || {};
       const payment = result?.payment || {};
       const confirmation = result?.confirmation || {};
@@ -974,8 +1112,12 @@
         const runState = progress.querySelector("[data-run-state]");
         runState.textContent = result?.ok === false ? "[ BUDGET GUARD ]" : "[ FAILED ]";
         runState.className = "state";
-        const message = reason || `No payment signature was returned within the ${budget.toFixed(2)} USDC cap.`;
-        this.appendMessage("agent", `${message} No funds were sent.`);
+        const safeBudget = Number.isFinite(budget) ? budget : 0;
+        const message = reason ||
+          `No payment signature was returned${safeBudget > 0 ? ` within the ${safeBudget.toFixed(2)} USDC cap` : ""}.`;
+        if (options.appendSummary !== false) {
+          this.appendMessage("agent", `${message} No funds were sent.`);
+        }
         return;
       }
 
@@ -989,23 +1131,29 @@
         runState.textContent = "[ PAID ]";
         runState.className = "state done";
         this.showProof(progress, explorer, signature, orderId);
-        this.appendMessage(
-          "agent",
-          `Purchase complete: ${quote.title || "catalog item"} for ${quotedAmount}. Shopify order ${orderId || "recorded"} was created only after on-chain verification.`,
-        );
+        if (options.appendSummary !== false) {
+          this.appendMessage(
+            "agent",
+            `Purchase complete: ${quote.title || "catalog item"} for ${quotedAmount}. Shopify order ${orderId || "recorded"} was created only after on-chain verification.`,
+          );
+        }
       } else if (status === "pending") {
         this.updateStep(progress, 4, "ACTIVE", `VERIFYING · ${this.short(confirmation.orderRef || quote.orderRef)}`);
         const runState = progress.querySelector("[data-run-state]");
         runState.textContent = "[ VERIFYING ]";
         this.showProof(progress, explorer, signature, confirmation.orderRef || quote.orderRef);
-        this.appendMessage("agent", "The transfer is on-chain and the order reference is still being verified.");
+        if (options.appendSummary !== false) {
+          this.appendMessage("agent", "The transfer is on-chain and the order reference is still being verified.");
+        }
       } else {
         this.updateStep(progress, 4, "FAILED", (status || "FAILED").toUpperCase());
         const runState = progress.querySelector("[data-run-state]");
         runState.textContent = `[ ${(status || "FAILED").toUpperCase()} ]`;
         runState.className = "state";
         this.showProof(progress, explorer, signature, confirmation.orderRef || quote.orderRef);
-        this.appendMessage("agent", reason || `Settlement finished with status: ${status || "unknown"}.`);
+        if (options.appendSummary !== false) {
+          this.appendMessage("agent", reason || `Settlement finished with status: ${status || "unknown"}.`);
+        }
       }
     }
 
