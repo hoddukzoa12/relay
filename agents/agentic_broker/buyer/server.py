@@ -240,7 +240,11 @@ def buy(
     if body.text:
         return flow.buy_from_text(body.text)
     query = body.query or "wireless earbuds"
-    budget = body.budget if body.budget is not None else 30.0
+    budget = (
+        body.budget
+        if body.budget is not None
+        else settings.default_budget_usdc
+    )
     ship_to = body.shipTo or settings.default_ship_to
 
     identity: auth.ClerkIdentity | None = None

@@ -99,7 +99,7 @@ In Shopify Admin:
 5. Replace `https://YOUR-TUNNEL.trycloudflare.com` in the first element with the
    HTTPS URL printed by the tunnel, then save.
 
-The file already reads `product.title` and defaults the budget to `25` USDC.
+The file already reads `product.title` and defaults the budget to `5` USDC.
 Change the `budget-usdc` default or edit it in the rendered widget for the demo.
 
 ### Reusable theme snippet + exact Custom Liquid block
@@ -112,18 +112,17 @@ Then paste this exact block into a product-template **Custom Liquid** section,
 changing only the HTTPS URL and demo destination:
 
 ```liquid
-{% assign relay_budget = product.price | divided_by: 100.0 %}
 {% render 'relay-agent-buy',
   agent_base_url: 'https://YOUR-TUNNEL.trycloudflare.com',
   product_query: product.title,
-  budget_usdc: relay_budget,
+  budget_usdc: 5,
   ship_to: 'Google Startup Campus, Seoul, KR'
 %}
 ```
 
-If the storefront price is not denominated one-to-one with the intended USDC
-demo budget, replace `budget_usdc: relay_budget` with a fixed maximum such as
-`budget_usdc: 25`.
+The fixed `5` USDC ceiling covers the current supplier catalog's 15% markup
+without deriving a payment authorization from presentation-layer price
+formatting.
 
 The widget's configurable element is:
 
@@ -131,7 +130,7 @@ The widget's configurable element is:
 <relay-agent-buy
   agent-base-url="https://YOUR-TUNNEL.trycloudflare.com"
   product-query="wireless earbuds"
-  budget-usdc="25"
+  budget-usdc="5"
   ship-to="Google Startup Campus, Seoul, KR"
 ></relay-agent-buy>
 ```

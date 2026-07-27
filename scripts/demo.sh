@@ -1,11 +1,11 @@
 #!/usr/bin/env bash
 # Scripted end-to-end purchase against a running stack.
-# Usage: ./scripts/demo.sh "wireless earbuds" 25
+# Usage: ./scripts/demo.sh "wireless earbuds" 5
 set -euo pipefail
 
 BUYER="${BUYER_AGENT_URL:-http://localhost:8090}"
 QUERY="${1:-wireless earbuds}"
-BUDGET="${2:-25}"
+BUDGET="${2:-5}"
 
 echo "▶ Delegating to buyer agent: '$QUERY' (budget ${BUDGET} USDC)"
 echo "  buyer = $BUYER"

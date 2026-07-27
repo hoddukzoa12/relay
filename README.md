@@ -100,8 +100,8 @@ make setup                    # pnpm install + python venv (agents/.venv)
 # 4. Sanity-check balances (SOL for fees + devnet USDC)
 make check-wallets
 
-# 5. Live Shopify only: idempotently seed/publish the demo catalog
-pnpm seed:catalog
+# 5. Fallback only: seed the demo catalog when no supplier catalog is active
+pnpm seed:catalog:fallback
 ```
 
 > **USDC mint:** `.env` defaults to Circle's devnet USDC
@@ -127,9 +127,9 @@ Use the Shopify storefront widget for the browser demo, or exercise the
 autonomous agent path directly:
 
 ```bash
-./scripts/demo.sh "wireless earbuds" 25
+./scripts/demo.sh "wireless earbuds" 5
 # or the buyer CLI:
-cd agents && ./.venv/bin/python -m agentic_broker.buyer.cli --query "wireless earbuds" --budget 25
+cd agents && ./.venv/bin/python -m agentic_broker.buyer.cli --query "wireless earbuds" --budget 5
 ```
 
 You get back a `txSignature` and an **explorer link** — the on-chain proof.
@@ -321,7 +321,8 @@ under three minutes.
   deterministic fallback.
 - **No Shopify yet?** `COMMERCE_MOCK=true` (default) serves a fixed demo catalog
   and returns a mock order id — the on-chain payment is still 100% real. Flip
-  to `false` and run `pnpm seed:catalog` once your store is ready.
+  to `false` and run `pnpm seed:catalog:fallback` only when no supplier
+  catalog is active.
 - **Wallets are required** for a real tx (you have them).
 
 ## Troubleshooting

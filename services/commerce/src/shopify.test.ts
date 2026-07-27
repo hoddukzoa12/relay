@@ -4,12 +4,18 @@ import {
   catalogProductsFromShopify,
   listProducts,
   rankAndLimit,
+  selectCatalogVariant,
 } from "./catalog.js";
+import {
+  ShopifyCurrencyMismatchError,
+  ShopifyStoreCurrency,
+} from "./shopify-currency.js";
 import {
   ShopifyAdminClient,
   ShopifyTokenProvider,
 } from "./shopify-client.js";
 import {
+  buildShopifyOrderInput,
   createPaidOrder,
   fulfillOrder,
   getOrderStatus,
@@ -165,7 +171,7 @@ test("mock catalog is deterministic and query-ranked", async () => {
   assert.ok(products.every((product) => product.sku.startsWith("RELAY-")));
 });
 
-test("live catalog tolerates Shopify variants with a null SKU", () => {
+test("live catalog selects the cheapest in-stock variant with a real SKU", () => {
   const products = catalogProductsFromShopify({
     products: {
       nodes: [
@@ -180,14 +186,26 @@ test("live catalog tolerates Shopify variants with a null SKU", () => {
               {
                 id: "gid://shopify/ProductVariant/without-sku",
                 sku: null,
-                price: "3.00",
-                inventoryQuantity: 5,
+                price: "1.00",
+                inventoryQuantity: 50,
               },
               {
                 id: "gid://shopify/ProductVariant/alternate-sku",
                 sku: "RELAY-ALTERNATE",
                 price: "3.00",
                 inventoryQuantity: 5,
+              },
+              {
+                id: "gid://shopify/ProductVariant/out-of-stock",
+                sku: "RELAY-CHEAP",
+                price: "2.00",
+                inventoryQuantity: 0,
+              },
+              {
+                id: "gid://shopify/ProductVariant/deeper-stock",
+                sku: "RELAY-DEEP",
+                price: "3.00",
+                inventoryQuantity: 20,
               },
             ],
           },
@@ -215,8 +233,92 @@ test("live catalog tolerates Shopify variants with a null SKU", () => {
 
   const ranked = rankAndLimit(products, "wireless", 10);
   assert.equal(ranked.length, 2);
-  assert.equal(ranked[0]?.variantId, "gid://shopify/ProductVariant/without-sku");
-  assert.equal(ranked[0]?.sku, "");
+  assert.equal(ranked[0]?.variantId, "gid://shopify/ProductVariant/deeper-stock");
+  assert.equal(ranked[0]?.sku, "RELAY-DEEP");
+});
+
+test("variant selection rejects unavailable and malformed choices", () => {
+  assert.equal(
+    selectCatalogVariant([
+      {
+        id: "gid://shopify/ProductVariant/out",
+        sku: "OUT",
+        price: "1.00",
+        inventoryQuantity: 0,
+      },
+      {
+        id: "gid://shopify/ProductVariant/bad-price",
+        sku: "BAD",
+        price: "not-money",
+        inventoryQuantity: 10,
+      },
+      {
+        id: "gid://shopify/ProductVariant/no-sku",
+        sku: null,
+        price: "1.00",
+        inventoryQuantity: 10,
+      },
+    ]),
+    undefined,
+  );
+});
+
+test("Shopify currency is cached but mismatches fail closed", async () => {
+  let reads = 0;
+  const resolver = new ShopifyStoreCurrency(
+    async <T>() => {
+      reads += 1;
+      return { shop: { currencyCode: reads === 1 ? "USD" : "KRW" } } as T;
+    },
+    { cacheTtlMs: 60_000 },
+  );
+
+  assert.equal(await resolver.requireUsdcParity(), "USD");
+  assert.equal(await resolver.requireUsdcParity(), "USD");
+  assert.equal(reads, 1);
+  await assert.rejects(
+    resolver.requireUsdcParity({ forceRefresh: true }),
+    (error: unknown) =>
+      error instanceof ShopifyCurrencyMismatchError &&
+      /KRW.*not USD.*refusing/i.test(error.message),
+  );
+  assert.equal(reads, 2);
+});
+
+test("order payload binds the selected variant and SKU and rejects KRW", () => {
+  const order = {
+    ...input(`order-${crypto.randomUUID()}`),
+    productId: "gid://shopify/Product/fallback",
+    variantId: "gid://shopify/ProductVariant/selected",
+    sku: "14:193#black",
+  };
+  const payload = buildShopifyOrderInput(order, "USD") as {
+    currency: string;
+    lineItems: { variantId: string; priceSet: { shopMoney: { currencyCode: string } } }[];
+    customAttributes: { key: string; value: string }[];
+  };
+
+  assert.equal(payload.currency, "USD");
+  assert.equal(
+    payload.lineItems[0]?.variantId,
+    "gid://shopify/ProductVariant/selected",
+  );
+  assert.equal(
+    payload.lineItems[0]?.priceSet.shopMoney.currencyCode,
+    "USD",
+  );
+  assert.equal(
+    payload.customAttributes.find(({ key }) => key === "variant_id")?.value,
+    "gid://shopify/ProductVariant/selected",
+  );
+  assert.equal(
+    payload.customAttributes.find(({ key }) => key === "sku")?.value,
+    "14:193#black",
+  );
+  assert.throws(
+    () => buildShopifyOrderInput(order, "KRW"),
+    /KRW.*not USD.*refusing/i,
+  );
 });
 
 test("Shopify idempotency tags stay within the platform limit", () => {

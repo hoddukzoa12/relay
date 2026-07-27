@@ -40,7 +40,7 @@ Full spec: [`PRD.md`](./PRD.md) · workflow: [`docs/WORKFLOW.md`](./docs/WORKFLO
 ## Run / verify
 ```bash
 make setup            # pnpm install + python venv (agents/.venv)
-pnpm seed:catalog     # idempotently seed/publish the live Shopify demo catalog
+pnpm seed:catalog:fallback # only when no active supplier catalog exists
 make check-wallets    # SOL (fees) + USDC balances for both wallets
 ./scripts/dev.sh      # all five services; buyer API health at http://localhost:8090/health
 ./scripts/demo.sh "wireless earbuds" 5

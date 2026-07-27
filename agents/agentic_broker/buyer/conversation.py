@@ -70,7 +70,7 @@ class AgentTurnError(RuntimeError):
 @dataclass
 class _FallbackState:
     query: str = ""
-    budget: float = 30.0
+    budget: float = settings.default_budget_usdc
     products: list[dict[str, Any]] = field(default_factory=list)
 
 

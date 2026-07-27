@@ -102,6 +102,40 @@ class CatalogSourcingTest(unittest.TestCase):
             )
         self.assertEqual(selected["sku"], "BUDS")
 
+    def test_relevance_handles_long_supplier_titles_and_descriptions(self) -> None:
+        earbuds = product(
+            "14:193#black",
+            (
+                "TWS F9-5 Earphone Bluetooth 5.3 Wireless Headphones "
+                "Hifi Stereo Sports Waterproof Earbuds Headset"
+            ),
+            "3.95",
+            1245,
+        )
+        earbuds["description"] = (
+            "SPECIFICATIONSActive Noise-Cancellation: Yes "
+            "Package List: User Manual, Charging case, Charging Cable"
+        )
+        unrelated = product(
+            "CASE",
+            "Protective Smartphone Carrying Case",
+            "1.00",
+            500,
+        )
+        unrelated["description"] = (
+            "Compatible with sports use. Waterproof coating. "
+            "Store your earbuds beside the phone."
+        )
+
+        with patch.object(llm, "gemini_available", return_value=False):
+            selected = llm.source_offer(
+                "sports waterproof earbuds",
+                5.00,
+                [unrelated, earbuds],
+            )
+
+        self.assertEqual(selected["sku"], "14:193#black")
+
 
 if __name__ == "__main__":
     unittest.main()

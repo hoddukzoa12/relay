@@ -8,6 +8,11 @@ import type {
 import { config } from "./config.js";
 import { ShopifyAdminClient } from "./shopify-client.js";
 import {
+  ShopifyStoreCurrency,
+  requireUsdcParityCurrency,
+  type StoreCurrencyOptions,
+} from "./shopify-currency.js";
+import {
   DEMO_CARRIER,
   DEMO_TRACKING_MESSAGE,
   DEMO_TRACKING_NUMBER,
@@ -45,6 +50,14 @@ export async function shopifyGraphQL<T>(
   variables: Record<string, unknown>,
 ): Promise<T> {
   return shopifyAdmin.graphql<T>(query, variables);
+}
+
+const shopifyStoreCurrency = new ShopifyStoreCurrency(shopifyGraphQL);
+
+export async function requireShopifyUsdcParityCurrency(
+  options: StoreCurrencyOptions = {},
+): Promise<string> {
+  return shopifyStoreCurrency.requireUsdcParity(options);
 }
 
 const ORDER_CREATE = /* GraphQL */ `
@@ -336,6 +349,12 @@ async function findOrderByRef(orderRef: string): Promise<ShopifyOrder | null> {
 }
 
 async function createOrder(input: OrderInput): Promise<ShopifyOrder> {
+  // Re-read immediately before the irreversible order write. The catalog path
+  // also validates currency before a quote, but this closes the window if an
+  // administrator changes the store currency while a quote is in flight.
+  const storeCurrency = await requireShopifyUsdcParityCurrency({
+    forceRefresh: true,
+  });
   const existing = await findOrderByRef(input.orderRef);
   if (existing) {
     console.log(
@@ -345,35 +364,7 @@ async function createOrder(input: OrderInput): Promise<ShopifyOrder> {
   }
 
   const created = await shopifyGraphQL<OrderCreateData>(ORDER_CREATE, {
-    order: {
-      currency: config.shopify.currency,
-      lineItems: [
-        {
-          variantId: input.variantId ?? input.productId,
-          quantity: 1,
-          priceSet: {
-            shopMoney: {
-              amount: input.amount,
-              currencyCode: config.shopify.currency,
-            },
-          },
-        },
-      ],
-      note: `Autonomous agent order. Paid on-chain: ${input.explorer}`,
-      tags: ["relay", orderTag(input.orderRef)],
-      customAttributes: [
-        { key: "order_ref", value: input.orderRef },
-        { key: "usdc_amount", value: input.amount },
-        { key: "payment_reference", value: input.paymentReference ?? "" },
-        { key: "tx_signature", value: input.txSignature },
-        { key: "network", value: `solana-${config.cluster}` },
-        { key: "buyer_wallet", value: input.buyerAddress },
-        { key: "ship_to", value: input.shipTo },
-        { key: "variant_id", value: input.variantId ?? input.productId },
-        { key: "sku", value: input.sku ?? "" },
-        { key: "refund_status", value: "not_refunded" },
-      ],
-    },
+    order: buildShopifyOrderInput(input, storeCurrency),
   });
 
   const errors = created.orderCreate.userErrors;
@@ -381,6 +372,43 @@ async function createOrder(input: OrderInput): Promise<ShopifyOrder> {
     throw new Error(`orderCreate failed: ${JSON.stringify(errors)}`);
   }
   return created.orderCreate.order;
+}
+
+export function buildShopifyOrderInput(
+  input: OrderInput,
+  storeCurrency: string,
+): Record<string, unknown> {
+  const currency = requireUsdcParityCurrency(storeCurrency);
+  const variantId = input.variantId ?? input.productId;
+  return {
+    currency,
+    lineItems: [
+      {
+        variantId,
+        quantity: 1,
+        priceSet: {
+          shopMoney: {
+            amount: input.amount,
+            currencyCode: currency,
+          },
+        },
+      },
+    ],
+    note: `Autonomous agent order. Paid on-chain: ${input.explorer}`,
+    tags: ["relay", orderTag(input.orderRef)],
+    customAttributes: [
+      { key: "order_ref", value: input.orderRef },
+      { key: "usdc_amount", value: input.amount },
+      { key: "payment_reference", value: input.paymentReference ?? "" },
+      { key: "tx_signature", value: input.txSignature },
+      { key: "network", value: `solana-${config.cluster}` },
+      { key: "buyer_wallet", value: input.buyerAddress },
+      { key: "ship_to", value: input.shipTo },
+      { key: "variant_id", value: variantId },
+      { key: "sku", value: input.sku ?? "" },
+      { key: "refund_status", value: "not_refunded" },
+    ],
+  };
 }
 
 async function markOrderPaid(order: ShopifyOrder): Promise<void> {

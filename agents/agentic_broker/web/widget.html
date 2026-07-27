@@ -6,7 +6,7 @@
 <relay-agent-buy
   agent-base-url="{{ agent_base_url | default: 'https://YOUR-TUNNEL.trycloudflare.com' | escape }}"
   product-query="{{ product_query | default: product.title | escape }}"
-  budget-usdc="{{ budget_usdc | default: 25 }}"
+  budget-usdc="{{ budget_usdc | default: 5 }}"
   ship-to="{{ ship_to | default: 'Google Startup Campus, Seoul, KR' | escape }}"
 ></relay-agent-buy>
 
@@ -457,8 +457,8 @@
         ? "wireless earbuds"
         : (configuredQuery.trim() || "wireless earbuds");
       this.$("#budget").value = configuredBudget.includes("{{")
-        ? "25"
-        : (configuredBudget.trim() || "25");
+        ? "5"
+        : (configuredBudget.trim() || "5");
       this.$("#ship-to").value = configuredShipTo.trim() || "Google Startup Campus, Seoul, KR";
       this.$("#buy").addEventListener("click", () => this.buy());
       this.$("#auth-button").addEventListener("click", () => this.toggleAuth());
