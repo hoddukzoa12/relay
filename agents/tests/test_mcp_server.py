@@ -52,6 +52,21 @@ def test_mcp_transport_rejects_missing_or_wrong_api_key() -> None:
     assert missing.headers["www-authenticate"] == 'RelayApiKey realm="relay-mcp"'
 
 
+def test_mcp_transport_rejects_unapproved_host_after_authentication() -> None:
+    app = server.create_app(api_key="unit-test-secret", cors_origins="")
+    with TestClient(app) as client:
+        response = client.post(
+            "/mcp",
+            headers={
+                "Host": "attacker.example",
+                "X-Relay-API-Key": "unit-test-secret",
+            },
+            json={"jsonrpc": "2.0"},
+        )
+
+    assert response.status_code == 421
+
+
 def test_mcp_tools_are_thin_service_wrappers(monkeypatch) -> None:
     calls: list[tuple[str, tuple[object, ...]]] = []
 

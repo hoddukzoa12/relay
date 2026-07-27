@@ -1,8 +1,9 @@
 # Issue #17 — local MCP verification
 
-Verified on 2026-07-27 against the live Shopify catalog and Solana devnet. The
-Cloud Run deployment was intentionally not executed; it remains behind the
-explicit deployment approval gate.
+Verified locally on 2026-07-27 against the live Shopify catalog and Solana
+devnet before the deployment approval gate opened. The later approved Cloud
+Run proof is in
+[`issue-17-mcp-deployed.md`](issue-17-mcp-deployed.md).
 
 ## Streamable HTTP and authentication
 
@@ -84,7 +85,7 @@ docker build --file agents/Dockerfile agents
   passed (Python 3.11 image with MCP 1.28.1)
 ```
 
-## Read-only Cloud Run inventory
+## Pre-deployment read-only Cloud Run inventory
 
 No Cloud Run or build mutation command was executed. A read-only inspection of
 `web3research/us-central1` found the existing four services and no MCP service:
@@ -96,7 +97,6 @@ No Cloud Run or build mutation command was executed. A read-only inspection of
 | shopping | `shopping-00002-nql` | `authdiag-20260726164143` | absent |
 | buyer | `buyer-00003-rxb` | `authdiag-20260726164143` | absent |
 
-The account currently has five `relay-*` secrets and four `relay-*` runtime
-service accounts. The gated deployment would add `relay-mcp-api-key` and
-`relay-mcp@web3research.iam.gserviceaccount.com`, then redeploy all five
-services from one approved commit tag.
+At this pre-deployment checkpoint the account had five `relay-*` secrets and
+four `relay-*` runtime service accounts. The later approved rollout added the
+sixth secret and MCP runtime identity.

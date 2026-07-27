@@ -12,7 +12,7 @@ intentional: the Cloud Run free tier is priced from `us-central1`; Seoul
 | commerce | https://commerce-763kssfe2q-uc.a.run.app | IAM only | `relay-commerce@web3research.iam.gserviceaccount.com` |
 | shopping | https://shopping-763kssfe2q-uc.a.run.app | IAM only | `relay-shopping@web3research.iam.gserviceaccount.com` |
 | buyer | **https://buyer-763kssfe2q-uc.a.run.app** | public | `relay-buyer@web3research.iam.gserviceaccount.com` |
-| mcp | assigned by the next approved deploy | public edge; API key required | `relay-mcp@web3research.iam.gserviceaccount.com` |
+| mcp | **https://mcp-1018608922006.us-central1.run.app/mcp** | public edge; API key required | `relay-mcp@web3research.iam.gserviceaccount.com` |
 
 The three private services keep `ingress=all` because peer calls use their
 `run.app` URLs, but Cloud Run rejects callers without `roles/run.invoker`.
@@ -60,9 +60,11 @@ sets all required non-secret values on all services and then wires:
 - shopping → `PAYMENTS_SERVICE_URL` + `COMMERCE_SERVICE_URL`;
 - buyer → `PAYMENTS_SERVICE_URL` + `COMMERCE_SERVICE_URL` +
   `SHOPPING_AGENT_URL`;
-- buyer CORS → `https://solanagcp.myshopify.com` + the buyer service URL.
+- buyer CORS → `https://solanagcp.myshopify.com` + both official buyer service
+  hostnames;
 - mcp → all four service URLs, with IAM invocation on the three private peers;
-- mcp public edge → `MCP_API_KEY=relay-mcp-api-key:latest`.
+- mcp public edge → `MCP_API_KEY=relay-mcp-api-key:latest`, with both Cloud Run
+  hostnames allowlisted for MCP SDK DNS-rebinding protection.
 
 The deployment deletes the three Artifact Registry image packages after Cloud
 Run imports the revisions. This avoids ongoing image-storage cost; a repeat
@@ -108,6 +110,7 @@ curl https://buyer-763kssfe2q-uc.a.run.app/health
 curl https://buyer-763kssfe2q-uc.a.run.app/
 
 # Each private URL returns 403 when the Authorization header is omitted.
+# The buyer root returns 404: the Shopify widget is the browser demo surface.
 # MCP /health is public, while /mcp returns 401 without X-Relay-API-Key.
 ```
 
@@ -131,22 +134,23 @@ done
 MCP transport and live money path:
 
 ```bash
-RELAY_MCP_URL=https://MCP_SERVICE_URL/mcp \
+RELAY_MCP_URL=https://mcp-1018608922006.us-central1.run.app/mcp \
 MCP_API_KEY="$MCP_API_KEY" \
   agents/.venv/bin/python scripts/mcp-client.py --purchase --refund
 ```
 
-The existing four-service `/buy` deployment was verified on 2026-07-27:
+The current five-service deployment was verified on 2026-07-27 through MCP:
 
-- result: `paid`;
-- real Shopify variant:
-  `gid://shopify/ProductVariant/59695017197854`
-  (`RELAY-AUDIO-EARBUD-MINI`);
 - amount: 3.45 devnet USDC;
-- transaction:
-  https://explorer.solana.com/tx/5Agbz4X5RByc2jMWzd9mH3WuZQkFnqy736UFthMcj2uTrGpaUz6StfaU7sjwx6kfrGJk5cM9rjn9VbvCTyd8AsRy?cluster=devnet;
-- paid Shopify order: `gid://shopify/Order/8709779915038`;
-- order ref: `ord_3a78e2a419fa44d2beb84884a251cec3`.
+- Shopify order: `gid://shopify/Order/8711153156382` (`#1015`);
+- payment:
+  https://explorer.solana.com/tx/FgQvnY6w5VAcdmk3C69QStb8h4acRKrebk7caq8uHLbEmTdRbrmvqarXWjpG29Yagf2ihWa53Hodkp6AkfzVcve?cluster=devnet;
+- refund:
+  https://explorer.solana.com/tx/2goDXD3xGeQLKpXYUYYanDjVVpsT2kv6kZgbS2ZUoPVTbP1HgFAKd1W2mzsSvXdTUxnrNSvYM2hvgPrJyjs8KjPh?cluster=devnet.
+
+See
+[`../../docs/evidence/issue-17-mcp-deployed.md`](../../docs/evidence/issue-17-mcp-deployed.md)
+for the tool list, `/buy` regression, CORS, IAM, and scale-to-zero evidence.
 
 Finish with:
 

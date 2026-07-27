@@ -272,7 +272,7 @@ Live deployment (`web3research`, `us-central1`):
 | commerce | https://commerce-763kssfe2q-uc.a.run.app | IAM only |
 | shopping | https://shopping-763kssfe2q-uc.a.run.app | IAM only |
 | buyer | **https://buyer-763kssfe2q-uc.a.run.app** | public API |
-| mcp | assigned by the next approved deploy | public edge; API key required |
+| mcp | **https://mcp-1018608922006.us-central1.run.app/mcp** | public edge; API key required |
 
 To reproduce from the prepared `.env` and local throwaway wallets:
 

@@ -24,6 +24,14 @@ class Settings:
     mcp_port: int = int(os.getenv("MCP_PORT", "8092"))
     mcp_api_key: str = os.getenv("MCP_API_KEY", "")
     mcp_cors_origins: str = os.getenv("MCP_CORS_ORIGINS", "*")
+    mcp_allowed_hosts: str = os.getenv(
+        "MCP_ALLOWED_HOSTS",
+        "localhost:*,127.0.0.1:*,testserver",
+    )
+    mcp_allowed_origins: str = os.getenv(
+        "MCP_ALLOWED_ORIGINS",
+        "http://localhost:*,http://127.0.0.1:*",
+    )
 
     google_api_key: str = os.getenv("GOOGLE_API_KEY", "")
     gemini_model: str = os.getenv("GEMINI_MODEL", "gemini-2.5-flash")

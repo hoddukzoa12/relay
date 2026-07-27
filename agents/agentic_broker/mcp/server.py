@@ -11,6 +11,7 @@ from typing import Any
 
 import uvicorn
 from mcp.server.fastmcp import FastMCP
+from mcp.server.transport_security import TransportSecuritySettings
 from starlette.applications import Starlette
 from starlette.middleware.cors import CORSMiddleware
 from starlette.requests import Request
@@ -24,6 +25,15 @@ from ..common.config import settings
 
 _API_KEY_HEADER = b"x-relay-api-key"
 
+
+def _comma_separated(value: str) -> list[str]:
+    return [
+        item.strip().rstrip("/")
+        for item in value.split(",")
+        if item.strip()
+    ]
+
+
 mcp = FastMCP(
     name="Relay",
     instructions=(
@@ -32,6 +42,11 @@ mcp = FastMCP(
     ),
     stateless_http=True,
     json_response=True,
+    transport_security=TransportSecuritySettings(
+        enable_dns_rebinding_protection=True,
+        allowed_hosts=_comma_separated(settings.mcp_allowed_hosts),
+        allowed_origins=_comma_separated(settings.mcp_allowed_origins),
+    ),
 )
 
 
@@ -134,11 +149,7 @@ async def _health(request: Request) -> JSONResponse:
 
 
 def _cors_origins(value: str) -> list[str]:
-    return [
-        origin.strip().rstrip("/")
-        for origin in value.split(",")
-        if origin.strip()
-    ]
+    return _comma_separated(value)
 
 
 def create_app(

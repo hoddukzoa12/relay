@@ -90,7 +90,7 @@ Generic remote-client configuration:
   "mcpServers": {
     "relay": {
       "type": "http",
-      "url": "https://MCP_SERVICE_URL/mcp",
+      "url": "https://mcp-1018608922006.us-central1.run.app/mcp",
       "headers": {
         "X-Relay-API-Key": "${RELAY_MCP_API_KEY}"
       }
@@ -100,13 +100,15 @@ Generic remote-client configuration:
 ```
 
 Client configuration syntax varies, but the URL and header are the same. For a
-browser-based inspector, set `MCP_CORS_ORIGINS` to the inspector origin (or `*`
-for a short-lived demo) and configure the same header.
+browser-based inspector, set `MCP_CORS_ORIGINS` and `MCP_ALLOWED_ORIGINS` to
+the inspector origin and configure the same header. Relay keeps MCP SDK
+DNS-rebinding protection enabled and allowlists both Cloud Run hostnames
+through `MCP_ALLOWED_HOSTS`.
 
 Unauthenticated protocol access must return `401`:
 
 ```bash
-curl -i -X POST https://MCP_SERVICE_URL/mcp \
+curl -i -X POST https://mcp-1018608922006.us-central1.run.app/mcp \
   -H 'Content-Type: application/json' \
   --data '{"jsonrpc":"2.0","id":1,"method":"tools/list"}'
 ```
@@ -114,7 +116,7 @@ curl -i -X POST https://MCP_SERVICE_URL/mcp \
 ## Cloud Run deployment
 
 Cloud deployment is an explicit approval-gated operation because it changes
-billable project state. The prepared deployment:
+billable project state. The approved 2026-07-27 deployment:
 
 - builds three images (`payments`, `commerce`, and the shared `agents` image);
 - redeploys payments, commerce, shopping, and buyer from the current commit;
@@ -127,13 +129,13 @@ billable project state. The prepared deployment:
 - deletes Artifact Registry image copies and Cloud Build sources after Cloud
   Run imports the revisions.
 
-After approval and deployment, validate the remote URL:
+Validate the deployed remote URL:
 
 ```bash
-RELAY_MCP_URL="https://MCP_SERVICE_URL/mcp" \
+RELAY_MCP_URL="https://mcp-1018608922006.us-central1.run.app/mcp" \
 MCP_API_KEY="$MCP_API_KEY" \
   agents/.venv/bin/python scripts/mcp-client.py --purchase --refund
 ```
 
-Capture the tool list, paid and refund explorer URLs, Shopify order ID, and the
-Cloud Run region/min-scale inspection in the pull request evidence.
+The deployed purchase/refund proof and Cloud Run inventory are recorded in
+[`evidence/issue-17-mcp-deployed.md`](evidence/issue-17-mcp-deployed.md).
