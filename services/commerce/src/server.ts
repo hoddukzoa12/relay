@@ -1,6 +1,10 @@
 import express, { type Request, type Response, type NextFunction } from "express";
 import cors from "cors";
 import { z } from "zod";
+import {
+  StructuredShippingAddressSchema,
+  SupplierCostSnapshotSchema,
+} from "@arb/shared";
 import { config } from "./config.js";
 import { listProducts } from "./catalog.js";
 import {
@@ -24,7 +28,12 @@ const asyncH =
     fn(req, res).catch(next);
 
 app.get("/health", (_req, res) =>
-  res.json({ ok: true, service: "commerce", mock: config.mock }),
+  res.json({
+    ok: true,
+    service: "commerce",
+    mock: config.mock,
+    supplierFulfillmentEnabled: config.supplierFulfillmentEnabled,
+  }),
 );
 
 const ProductQuerySchema = z.object({
@@ -52,6 +61,8 @@ const OrderSchema = z.object({
   paymentReference: z.string().optional(),
   txSignature: z.string(),
   explorer: z.string(),
+  supplierCost: SupplierCostSnapshotSchema.nullish(),
+  shippingAddress: StructuredShippingAddressSchema.nullish(),
 });
 
 app.post(

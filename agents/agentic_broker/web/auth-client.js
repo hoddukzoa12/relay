@@ -521,7 +521,7 @@
       return this.submitDelegation("revoke");
     }
 
-    async signIntent({ query, budget, shipTo }) {
+    async signIntent({ query, budget, shipTo, shippingAddress = null }) {
       const identity = this.identity || await this.refreshIdentity();
       if (!identity?.walletAddress) {
         throw new Error("Sign in with your Solana wallet first.");
@@ -535,6 +535,7 @@
           currency: "USDC",
         },
         ship_to: shipTo,
+        ...(shippingAddress ? { shipping_address: shippingAddress } : {}),
         intent_expiry: new Date(Date.now() + 15 * 60 * 1000).toISOString(),
         signer_wallet: identity.walletAddress,
       };

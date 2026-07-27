@@ -618,12 +618,19 @@
         title.textContent = `${order.name} · ${order.title || "Relay order"}`;
         const meta = document.createElement("span");
         meta.textContent = `${order.amount} USDC · ${order.status} · `;
+        const supplier = document.createElement("span");
+        const supplierStatus = String(
+          order.supplierOrder?.status || "disabled",
+        ).replaceAll("_", " ");
+        supplier.textContent = `Supplier order: ${supplierStatus}. `;
+        supplier.title = order.supplierOrder?.message ||
+          "No supplier order or tracking number was created.";
         const link = document.createElement("a");
         link.textContent = "Explorer ↗";
         link.href = order.explorer;
         link.target = "_blank";
         link.rel = "noopener noreferrer";
-        row.append(title, meta, link);
+        row.append(title, meta, supplier, link);
         container.append(row);
       });
     }
@@ -747,6 +754,11 @@
 
       const signature = payment.txSignature || confirmation.txSignature || "";
       const status = String(confirmation.status || "").toLowerCase();
+      const supplierOrder = confirmation.supplierOrder || {
+        status: "disabled",
+        ref: null,
+        message: "Supplier fulfillment is disabled; no supplier order was created.",
+      };
       const isPaid = status === "paid";
       const isPending = status === "pending";
 
@@ -772,10 +784,11 @@
           ["status", "PAID · VERIFIED"],
           ["orderRef", this.short(confirmation.orderRef || quote.orderRef), confirmation.orderRef || quote.orderRef],
           ["shopifyOrderId", this.short(confirmation.shopifyOrderId), confirmation.shopifyOrderId],
+          ["supplier order", String(supplierOrder.status).replaceAll("_", " ").toUpperCase()],
         ]);
         this.setRunState("PAID", "paid");
         this.$("#outcome").textContent =
-          "Autonomous purchase complete. The buyer signed and settled without Shopify checkout.";
+          `Autonomous payment complete. Shopify is the order ledger. ${supplierOrder.message}`;
       } else if (isPending) {
         this.setStep(4, "active", "VERIFYING", "Transfer sent; reference verification is awaiting network confirmation.", [
           ["status", "PENDING"],

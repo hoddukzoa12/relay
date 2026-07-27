@@ -49,17 +49,25 @@ def source_and_price(query: str, budget_amount: float) -> dict[str, Any]:
         product = catalog_product.model_dump()
         try:
             inventory = int(product["inventoryQuantity"])
-            cost = Decimal(str(product["price"]))
+            supplier_cost = product["supplierCost"]
+            if not supplier_cost:
+                continue
+            cost = Decimal(str(supplier_cost["amount"]))
+            catalog_price = Decimal(str(product["price"]))
         except (KeyError, TypeError, ValueError, InvalidOperation):
             continue
         if (
             inventory <= 0
             or cost <= 0
+            or catalog_price <= 0
             or not product.get("variantId")
             or not product.get("sku")
         ):
             continue
-        sale_price = (cost * multiplier).quantize(
+        # Keep the store's reviewed USD catalog price as the resale-price basis.
+        # The DSers value is independent margin evidence and must never silently
+        # reprice Shopify (DSers has reported a divergent KRW store default).
+        sale_price = (catalog_price * multiplier).quantize(
             Decimal("0.01"), rounding=ROUND_HALF_UP
         )
         if sale_price > budget:
@@ -67,7 +75,7 @@ def source_and_price(query: str, budget_amount: float) -> dict[str, Any]:
         candidates.append(
             {
                 **product,
-                "price": float(cost),
+                "price": float(catalog_price),
                 "salePrice": float(sale_price),
             }
         )
@@ -84,7 +92,9 @@ def source_and_price(query: str, budget_amount: float) -> dict[str, Any]:
         "variantId": offer["variantId"],
         "sku": offer["sku"],
         "title": offer["title"],
-        "cost": offer["price"],
+        "cost": float(Decimal(str(offer["supplierCost"]["amount"]))),
+        "catalogPrice": offer["price"],
+        "supplierCost": offer["supplierCost"],
         "price": offer["salePrice"],
         "inventoryQuantity": offer["inventoryQuantity"],
         "overBudget": False,
@@ -122,10 +132,12 @@ def record_order(
     payment_reference: str,
     tx_signature: str,
     explorer: str,
+    supplier_cost: dict[str, Any] | None = None,
+    shipping_address: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     """Record the paid order in Shopify (orderCreate + orderMarkAsPaid).
 
-    Returns {"shopifyOrderId", "name", "mocked"}.
+    Returns Shopify ledger identity plus the explicit supplier-order state.
     """
     return service_clients.commerce_create_order(
         {
@@ -140,6 +152,8 @@ def record_order(
             "paymentReference": payment_reference,
             "txSignature": tx_signature,
             "explorer": explorer,
+            "supplierCost": supplier_cost,
+            "shippingAddress": shipping_address,
         }
     )
 
@@ -148,7 +162,7 @@ def get_order_status(identifier: str) -> dict[str, Any]:
     """Get one Relay order by orderRef or Shopify name (for example ``#1006``).
 
     Returns financial and fulfillment status, real catalog SKUs, paid amount,
-    both on-chain proof slots, refund state, and any demo tracking metadata.
+    both on-chain proof slots, refund state, and the explicit supplier state.
     This primitive is intentionally reusable as MCP ``get_order_status``.
     """
     return OrderStatus(**service_clients.commerce_order(identifier)).model_dump()
@@ -248,14 +262,14 @@ def refund_order(identifier: str) -> dict[str, Any]:
 
 
 def fulfill_order(order_ref: str) -> dict[str, Any]:
-    """Mark a paid Shopify order FULFILLED with an explicit demo waybill."""
+    """Request fulfillment; currently fails closed while Leg 2 is unconnected."""
     return FulfillmentResult(
         **service_clients.commerce_fulfill_order(order_ref)
     ).model_dump()
 
 
 def track_order(identifier: str) -> dict[str, Any]:
-    """Look up an order's demo waybill via the EasyPost provider interface."""
+    """Request tracking; currently fails closed until a real shipment exists."""
     return TrackingInfo(
         **service_clients.commerce_track_order(identifier)
     ).model_dump()

@@ -9,7 +9,7 @@ is no stdio-only server and no Shopify checkout or human payment approval.
 | Tool | Inputs | Delegates to |
 |---|---|---|
 | `search_products` | `query`, `limit` (1–50) | commerce catalog |
-| `request_quote` | `query`, `budget`, `ship_to` | buyer → shopping A2A quote, bound to the OAuth wallet when present |
+| `request_quote` | `query`, `budget`, `ship_to`, optional `shipping_address` | buyer → shopping A2A quote, bound to the OAuth wallet when present |
 | `authorize_payment` | `pay_to`, `amount`, `reference` | autonomous signer; OAuth user ATA or service-principal agent wallet |
 | `settle` | `order_ref`, `reference`, `tx_signature` | shopping verification + Shopify ledger |
 | `get_order_status` | `order_ref` | shopping order lifecycle |
@@ -22,6 +22,12 @@ The intended money path is:
 request_quote → authorize_payment → settle → get_order_status
                                              └→ refund_order
 ```
+
+`shipping_address` uses recipient `name`, `address1`, optional `address2`,
+`city`, `province`, ISO-2 `country`, `zip`, and optional `phone`; it is signed
+into the IntentMandate and is never inferred from `ship_to`. Even when supplied,
+commerce omits Shopify `shippingAddress` unless the default-off
+`SUPPLIER_FULFILLMENT_ENABLED` money gate is explicitly enabled.
 
 Pass the quote fields through unchanged. `authorize_payment` signs and
 broadcasts USDC autonomously. `settle` does not trust the supplied signature

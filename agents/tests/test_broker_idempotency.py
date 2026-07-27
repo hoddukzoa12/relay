@@ -7,6 +7,7 @@ from agentic_broker.common.contracts import (
     Money,
     PurchaseIntent,
     SettlementRequest,
+    StructuredShippingAddress,
 )
 from agentic_broker.shopping import broker
 
@@ -20,7 +21,15 @@ class BrokerIdempotencyTest(unittest.TestCase):
         intent = PurchaseIntent(
             query="test product",
             budget=Money(amount="5.00", currency="USDC"),
-            shipTo="test destination",
+            shipTo="Grace Hopper, 123 Main St, Arlington, VA, 22201, US",
+            shippingAddress=StructuredShippingAddress(
+                name="Grace Hopper",
+                address1="123 Main St",
+                city="Arlington",
+                province="VA",
+                country="US",
+                zip="22201",
+            ),
         )
 
         def issue_payment_request(
@@ -50,6 +59,14 @@ class BrokerIdempotencyTest(unittest.TestCase):
                     "sku": "RELAY-TEST-1",
                     "title": "Test Product",
                     "cost": 1.0,
+                    "supplierCost": {
+                        "amount": "1.00",
+                        "currency": "USD",
+                        "source": "dsers_mcp_snapshot",
+                        "capturedAt": "2026-07-27",
+                        "shipTo": "US",
+                        "supplierUrl": "https://supplier.test/item/1",
+                    },
                     "price": 1.15,
                     "inventoryQuantity": 10,
                     "overBudget": False,
@@ -116,8 +133,18 @@ class BrokerIdempotencyTest(unittest.TestCase):
             record_order.call_args.kwargs["sku"],
             "RELAY-TEST-1",
         )
+        self.assertEqual(
+            record_order.call_args.kwargs["supplier_cost"]["amount"],
+            "1.00",
+        )
+        self.assertEqual(
+            record_order.call_args.kwargs["shipping_address"]["country"],
+            "US",
+        )
+        self.assertEqual(first.supplierOrder.status, "disabled")
+        self.assertIsNone(first.supplierOrder.ref)
 
-    def test_paid_state_survives_fulfillment_failure_and_retry(self) -> None:
+    def test_paid_state_survives_shopify_ledger_failure_and_retry(self) -> None:
         quote = self._quote()
         settlement = SettlementRequest(
             orderRef=quote.orderRef,
@@ -153,14 +180,14 @@ class BrokerIdempotencyTest(unittest.TestCase):
             ),
         ):
             with self.assertRaisesRegex(
-                broker.FulfillmentPendingError,
+                broker.OrderRecordingPendingError,
                 "paid on-chain.*remains pending",
             ):
                 broker.handle_settle(settlement)
 
             state = broker._orders[quote.orderRef]
             self.assertEqual(state.payment_status, "paid")
-            self.assertEqual(state.fulfillment_status, "pending")
+            self.assertEqual(state.ledger_status, "pending")
             self.assertEqual(state.paid_tx_signature, "tx_signature")
 
             confirmation = broker.handle_settle(settlement)
@@ -226,7 +253,7 @@ class BrokerIdempotencyTest(unittest.TestCase):
                 side_effect=RuntimeError("Shopify unavailable"),
             ),
         ):
-            with self.assertRaises(broker.FulfillmentPendingError):
+            with self.assertRaises(broker.OrderRecordingPendingError):
                 broker.handle_settle(
                     settlement, identity_wallet="first-wallet"
                 )

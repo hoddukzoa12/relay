@@ -21,6 +21,12 @@
     "requires_refundability": { "type": ["boolean", "null"], "default": false },
     "price_ceiling": { "$ref": "#/$defs/money" },
     "ship_to": { "type": "string" },
+    "shipping_address": {
+      "oneOf": [
+        { "$ref": "#/$defs/structuredShippingAddress" },
+        { "type": "null" }
+      ]
+    },
     "intent_expiry": { "type": "string", "format": "date-time" },
     "signer_wallet": {
       "type": "string",
@@ -53,6 +59,32 @@
       "properties": {
         "amount": { "type": "string", "pattern": "^\\d+(\\.\\d{1,6})?$" },
         "currency": { "const": "USDC" }
+      }
+    },
+    "structuredShippingAddress": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "name",
+        "address1",
+        "city",
+        "province",
+        "country",
+        "zip"
+      ],
+      "properties": {
+        "name": { "type": "string", "minLength": 1 },
+        "address1": { "type": "string", "minLength": 1 },
+        "address2": { "type": ["string", "null"], "minLength": 1 },
+        "city": { "type": "string", "minLength": 1 },
+        "province": { "type": "string", "minLength": 1 },
+        "country": {
+          "type": "string",
+          "pattern": "^[A-Z]{2}$",
+          "description": "ISO-3166-1 alpha-2 country code"
+        },
+        "zip": { "type": "string", "minLength": 3 },
+        "phone": { "type": ["string", "null"], "minLength": 5 }
       }
     }
   }

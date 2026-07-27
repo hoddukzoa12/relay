@@ -27,7 +27,6 @@ export const config = {
     apiVersion: process.env.SHOPIFY_API_VERSION ?? "2025-01",
   },
   cluster: process.env.SOLANA_CLUSTER ?? "devnet",
-  tracking: {
-    easypostApiKey: process.env.EASYPOST_API_KEY ?? "",
-  },
+  supplierFulfillmentEnabled:
+    process.env.SUPPLIER_FULFILLMENT_ENABLED === "true",
 };

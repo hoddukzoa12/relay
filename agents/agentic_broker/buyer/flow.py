@@ -8,7 +8,11 @@ from __future__ import annotations
 from typing import Any
 
 from ..common import llm
-from ..common.contracts import IntentMandate
+from ..common.contracts import (
+    IntentMandate,
+    StructuredShippingAddress,
+    format_shipping_address,
+)
 from . import tools
 
 
@@ -19,7 +23,10 @@ def buy(
     *,
     intent_mandate: IntentMandate | None = None,
     identity_wallet: str | None = None,
+    shipping_address: StructuredShippingAddress | None = None,
 ) -> dict[str, Any]:
+    if shipping_address:
+        ship_to = format_shipping_address(shipping_address)
     # Step 1–3: request a quote / agent-native payment request.
     quote = tools.request_quote(
         query,
@@ -27,6 +34,7 @@ def buy(
         ship_to,
         intent_mandate,
         delegator=identity_wallet,
+        shipping_address=shipping_address,
     )
 
     # Buyer-side guardrail: never overpay the budget it was delegated.
@@ -65,6 +73,15 @@ def buy(
             "query": query,
             "budget": budget,
             "shipTo": ship_to,
+            **(
+                {
+                    "shippingAddress": shipping_address.model_dump(
+                        exclude_none=True
+                    )
+                }
+                if shipping_address
+                else {}
+            ),
             **({"delegatedBy": identity_wallet} if identity_wallet else {}),
         },
         "quote": quote,
@@ -77,6 +94,7 @@ def buy_from_text(
     text: str,
     *,
     identity_wallet: str | None = None,
+    shipping_address: StructuredShippingAddress | None = None,
 ) -> dict[str, Any]:
     """Parse a natural-language instruction, then run the purchase."""
     intent = llm.parse_purchase(text)
@@ -85,4 +103,5 @@ def buy_from_text(
         intent["budget"],
         intent["shipTo"],
         identity_wallet=identity_wallet,
+        shipping_address=shipping_address,
     )

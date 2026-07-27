@@ -2,6 +2,9 @@ import { createHash } from "node:crypto";
 import type {
   FulfillmentResult,
   OrderStatus,
+  StructuredShippingAddress,
+  SupplierCostSnapshot,
+  SupplierOrder,
   TrackingInfo,
   WalletOrder,
 } from "@arb/shared";
@@ -12,14 +15,6 @@ import {
   requireUsdcParityCurrency,
   type StoreCurrencyOptions,
 } from "./shopify-currency.js";
-import {
-  DEMO_CARRIER,
-  DEMO_TRACKING_MESSAGE,
-  DEMO_TRACKING_NUMBER,
-  demoTrackingInfo,
-  lookupShipmentTracking,
-} from "./tracking.js";
-
 export interface OrderInput {
   orderRef: string;
   productId: string; // retained for compatibility; contains the variant id
@@ -32,12 +27,15 @@ export interface OrderInput {
   paymentReference?: string;
   txSignature: string;
   explorer: string;
+  supplierCost?: SupplierCostSnapshot | null;
+  shippingAddress?: StructuredShippingAddress | null;
 }
 
 export interface OrderResult {
   shopifyOrderId: string;
   name: string;
   mocked: boolean;
+  supplierOrder: SupplierOrder;
 }
 
 export class OrderNotFoundError extends Error {}
@@ -53,6 +51,167 @@ export async function shopifyGraphQL<T>(
 }
 
 const shopifyStoreCurrency = new ShopifyStoreCurrency(shopifyGraphQL);
+
+export const SUPPLIER_FULFILLMENT_DISABLED_MESSAGE =
+  "Supplier fulfillment is disabled; no structured Shopify shipping address or supplier order was created.";
+export const SUPPLIER_FULFILLMENT_BLOCKED_MESSAGE =
+  "Supplier fulfillment is enabled but the buyer did not provide a complete structured shipping address; no supplier order was created.";
+export const SUPPLIER_FULFILLMENT_PENDING_MESSAGE =
+  "A complete structured shipping address was submitted to Shopify for DSers auto-fulfillment; the supplier order is not yet confirmed and no supplier reference or tracking number is available.";
+
+export function disabledSupplierOrder(): SupplierOrder {
+  return {
+    provider: "dsers",
+    status: "disabled",
+    ref: null,
+    message: SUPPLIER_FULFILLMENT_DISABLED_MESSAGE,
+  };
+}
+
+const PLACEHOLDER_ADDRESS_VALUE =
+  /^(?:n\/?a|none|unknown|test|testing|placeholder|todo|tbd|-+)$/i;
+
+function cleanRequiredAddressValue(value: unknown): string | null {
+  if (typeof value !== "string") return null;
+  const cleaned = value.trim();
+  if (!cleaned || PLACEHOLDER_ADDRESS_VALUE.test(cleaned)) return null;
+  return cleaned;
+}
+
+/** Revalidate at the irreversible Shopify boundary; never synthesize fields. */
+export function completeShippingAddress(
+  address: StructuredShippingAddress | null | undefined,
+): StructuredShippingAddress | null {
+  if (!address) return null;
+  const name = cleanRequiredAddressValue(address.name);
+  const address1 = cleanRequiredAddressValue(address.address1);
+  const city = cleanRequiredAddressValue(address.city);
+  const province = cleanRequiredAddressValue(address.province);
+  const country = cleanRequiredAddressValue(address.country)?.toUpperCase();
+  const zip = cleanRequiredAddressValue(address.zip);
+  const address2 = address.address2?.trim() || null;
+  const phone = address.phone?.trim() || null;
+  if (
+    !name ||
+    !address1 ||
+    !city ||
+    !province ||
+    !country ||
+    !/^[A-Z]{2}$/.test(country) ||
+    !zip ||
+    zip.length < 3 ||
+    (address2 && PLACEHOLDER_ADDRESS_VALUE.test(address2)) ||
+    (phone &&
+      (phone.length < 5 || PLACEHOLDER_ADDRESS_VALUE.test(phone)))
+  ) {
+    return null;
+  }
+  return {
+    name,
+    address1,
+    address2,
+    city,
+    province,
+    country,
+    zip,
+    phone,
+  };
+}
+
+export function shopifyShippingAddress(
+  address: StructuredShippingAddress | null | undefined,
+): Record<string, string> | null {
+  const complete = completeShippingAddress(address);
+  if (!complete) return null;
+  const nameParts = complete.name.split(/\s+/);
+  const firstName =
+    nameParts.length > 1
+      ? nameParts.slice(0, -1).join(" ")
+      : complete.name;
+  const lastName =
+    nameParts.length > 1 ? nameParts[nameParts.length - 1]! : "";
+  return {
+    firstName,
+    ...(lastName ? { lastName } : {}),
+    address1: complete.address1,
+    ...(complete.address2 ? { address2: complete.address2 } : {}),
+    city: complete.city,
+    provinceCode: complete.province,
+    countryCode: complete.country,
+    zip: complete.zip,
+    ...(complete.phone ? { phone: complete.phone } : {}),
+  };
+}
+
+export function supplierOrderForInput(
+  input: Pick<OrderInput, "shippingAddress">,
+  enabled = config.supplierFulfillmentEnabled,
+): SupplierOrder {
+  if (!enabled) return disabledSupplierOrder();
+  if (!completeShippingAddress(input.shippingAddress)) {
+    return {
+      provider: "dsers",
+      status: "blocked",
+      ref: null,
+      message: SUPPLIER_FULFILLMENT_BLOCKED_MESSAGE,
+    };
+  }
+  return {
+    provider: "dsers",
+    status: "pending",
+    ref: null,
+    message: SUPPLIER_FULFILLMENT_PENDING_MESSAGE,
+  };
+}
+
+interface MarginEvidence {
+  supplierCostAmount: string;
+  supplierCostCurrency: "USD";
+  saleAmount: string;
+  saleCurrency: "USDC";
+  projectedGrossMarginAmount: string;
+  projectedGrossMarginPct: string;
+  basis: "snapshot_usd_usdc_parity_excludes_shipping_tax";
+}
+
+function decimalMicros(value: string): bigint {
+  const [whole, fraction = ""] = value.split(".");
+  if (!whole || !/^\d+$/.test(whole) || !/^\d*$/.test(fraction)) {
+    throw new Error(`Invalid decimal amount ${value}`);
+  }
+  return BigInt(whole) * 1_000_000n + BigInt((fraction + "000000").slice(0, 6));
+}
+
+function formatMicros(value: bigint): string {
+  const whole = value / 1_000_000n;
+  const fraction = (value % 1_000_000n)
+    .toString()
+    .padStart(6, "0")
+    .replace(/0+$/, "");
+  return fraction ? `${whole}.${fraction}` : `${whole}`;
+}
+
+export function marginEvidence(
+  saleAmount: string,
+  supplierCost: SupplierCostSnapshot | null | undefined,
+): MarginEvidence | null {
+  if (!supplierCost || supplierCost.currency !== "USD") return null;
+  const sale = decimalMicros(saleAmount);
+  const cost = decimalMicros(supplierCost.amount);
+  if (sale <= 0n || cost <= 0n || sale < cost) return null;
+  const margin = sale - cost;
+  const marginPctHundredths = (margin * 1_000_000n) / sale;
+  const marginPct = Number(marginPctHundredths) / 10_000;
+  return {
+    supplierCostAmount: supplierCost.amount,
+    supplierCostCurrency: "USD",
+    saleAmount,
+    saleCurrency: "USDC",
+    projectedGrossMarginAmount: formatMicros(margin),
+    projectedGrossMarginPct: marginPct.toFixed(2),
+    basis: "snapshot_usd_usdc_parity_excludes_shipping_tax",
+  };
+}
 
 export async function requireShopifyUsdcParityCurrency(
   options: StoreCurrencyOptions = {},
@@ -93,9 +252,6 @@ const ORDER_FIELDS = /* GraphQL */ `
     id
     status
     trackingInfo(first: 10) { company number url }
-  }
-  fulfillmentOrders(first: 50) {
-    nodes { id status }
   }
   transactions(first: 50) {
     id
@@ -140,19 +296,6 @@ const ORDER_UPDATE_ATTRIBUTES = /* GraphQL */ `
   }
 `;
 
-const FULFILLMENT_CREATE = /* GraphQL */ `
-  mutation FulfillmentCreate($fulfillment: FulfillmentInput!) {
-    fulfillmentCreate(fulfillment: $fulfillment) {
-      fulfillment {
-        id
-        status
-        trackingInfo(first: 10) { company number url }
-      }
-      userErrors { field message }
-    }
-  }
-`;
-
 function refundCreateMutation(useIdempotencyDirective: boolean): string {
   const keyVariable = useIdempotencyDirective
     ? ", $idempotencyKey: String!"
@@ -183,21 +326,14 @@ interface ShopifyLineItem {
   quantity: number;
 }
 
-interface ShopifyTracking {
-  company: string | null;
-  number: string | null;
-  url: string | null;
-}
-
 interface ShopifyFulfillment {
   id: string;
   status: string;
-  trackingInfo: ShopifyTracking[];
-}
-
-interface ShopifyFulfillmentOrder {
-  id: string;
-  status: string;
+  trackingInfo: {
+    company: string | null;
+    number: string | null;
+    url: string | null;
+  }[];
 }
 
 interface ShopifyTransaction {
@@ -218,7 +354,6 @@ interface ShopifyOrder {
   totalPriceSet?: { shopMoney: ShopifyMoney };
   lineItems?: { nodes: ShopifyLineItem[] };
   fulfillments?: ShopifyFulfillment[];
-  fulfillmentOrders?: { nodes: ShopifyFulfillmentOrder[] };
   transactions?: ShopifyTransaction[];
 }
 
@@ -258,13 +393,6 @@ interface RefundCreateData {
   };
 }
 
-interface FulfillmentCreateData {
-  fulfillmentCreate: {
-    fulfillment: ShopifyFulfillment | null;
-    userErrors: { field: string[] | null; message: string }[];
-  };
-}
-
 interface MockOrderRecord {
   input: OrderInput;
   result: OrderResult;
@@ -274,7 +402,6 @@ interface MockOrderRecord {
   refundTxSignature: string | null;
   refundReference: string | null;
   refundExplorer: string | null;
-  tracking: TrackingInfo | null;
 }
 
 let mockCounter = 1000;
@@ -377,11 +504,35 @@ async function createOrder(input: OrderInput): Promise<ShopifyOrder> {
 export function buildShopifyOrderInput(
   input: OrderInput,
   storeCurrency: string,
+  supplierFulfillmentEnabled = config.supplierFulfillmentEnabled,
 ): Record<string, unknown> {
   const currency = requireUsdcParityCurrency(storeCurrency);
   const variantId = input.variantId ?? input.productId;
+  const margin = marginEvidence(input.amount, input.supplierCost);
+  const supplierOrder = supplierOrderForInput(
+    input,
+    supplierFulfillmentEnabled,
+  );
+  const completeAddress = completeShippingAddress(input.shippingAddress);
+  const shippingAddress = supplierFulfillmentEnabled
+    ? shopifyShippingAddress(completeAddress)
+    : null;
+  const shipTo = completeAddress
+    ? [
+        completeAddress.name,
+        completeAddress.address1,
+        completeAddress.address2,
+        completeAddress.city,
+        completeAddress.province,
+        completeAddress.zip,
+        completeAddress.country,
+      ]
+        .filter(Boolean)
+        .join(", ")
+    : input.shipTo;
   return {
     currency,
+    ...(shippingAddress ? { shippingAddress } : {}),
     lineItems: [
       {
         variantId,
@@ -403,10 +554,62 @@ export function buildShopifyOrderInput(
       { key: "tx_signature", value: input.txSignature },
       { key: "network", value: `solana-${config.cluster}` },
       { key: "buyer_wallet", value: input.buyerAddress },
-      { key: "ship_to", value: input.shipTo },
+      { key: "ship_to", value: shipTo },
       { key: "variant_id", value: variantId },
       { key: "sku", value: input.sku ?? "" },
       { key: "refund_status", value: "not_refunded" },
+      { key: "supplier_order_provider", value: supplierOrder.provider },
+      { key: "supplier_order_status", value: supplierOrder.status },
+      { key: "supplier_order_ref", value: "" },
+      { key: "supplier_order_message", value: supplierOrder.message },
+      {
+        key: "supplier_fulfillment_gate",
+        value: supplierFulfillmentEnabled ? "enabled" : "disabled",
+      },
+      {
+        key: "supplier_cost_status",
+        value: input.supplierCost ? "snapshot" : "unavailable",
+      },
+      {
+        key: "supplier_cost_amount",
+        value: input.supplierCost?.amount ?? "",
+      },
+      {
+        key: "supplier_cost_currency",
+        value: input.supplierCost?.currency ?? "",
+      },
+      {
+        key: "supplier_cost_source",
+        value: input.supplierCost?.source ?? "",
+      },
+      {
+        key: "supplier_cost_captured_at",
+        value: input.supplierCost?.capturedAt ?? "",
+      },
+      {
+        key: "supplier_cost_ship_to",
+        value: input.supplierCost?.shipTo ?? "",
+      },
+      {
+        key: "supplier_url",
+        value: input.supplierCost?.supplierUrl ?? "",
+      },
+      {
+        key: "margin_status",
+        value: margin ? "projected_snapshot" : "unavailable",
+      },
+      {
+        key: "projected_gross_margin_amount",
+        value: margin?.projectedGrossMarginAmount ?? "",
+      },
+      {
+        key: "projected_gross_margin_pct",
+        value: margin?.projectedGrossMarginPct ?? "",
+      },
+      {
+        key: "margin_basis",
+        value: margin?.basis ?? "",
+      },
     ],
   };
 }
@@ -456,6 +659,24 @@ export function isTemporaryOrderMutationError(
 }
 
 async function createPaidOrderOnce(input: OrderInput): Promise<OrderResult> {
+  const margin = marginEvidence(input.amount, input.supplierCost);
+  if (margin && input.supplierCost) {
+    console.log(
+      `[economics] orderRef=${input.orderRef} supplierCost=${input.supplierCost.amount} USD ` +
+        `sale=${input.amount} USDC projectedGrossMargin=${margin.projectedGrossMarginAmount} USDC ` +
+        `marginPct=${margin.projectedGrossMarginPct} basis=${margin.basis} ` +
+        `capturedAt=${input.supplierCost.capturedAt}`,
+    );
+  } else {
+    console.warn(
+      `[economics] orderRef=${input.orderRef} supplier-cost snapshot unavailable; ` +
+        "margin was not calculated",
+    );
+  }
+  const supplierOrder = supplierOrderForInput(
+    input,
+    config.supplierFulfillmentEnabled && !config.mock,
+  );
   if (config.mock) {
     const n = ++mockCounter;
     console.log(
@@ -465,12 +686,18 @@ async function createPaidOrderOnce(input: OrderInput): Promise<OrderResult> {
       shopifyOrderId: `gid://shopify/Order/${n}`,
       name: `#${n}`,
       mocked: true,
+      supplierOrder,
     };
   }
 
   const order = await createOrder(input);
   await markOrderPaid(order);
-  return { shopifyOrderId: order.id, name: order.name, mocked: false };
+  return {
+    shopifyOrderId: order.id,
+    name: order.name,
+    mocked: false,
+    supplierOrder,
+  };
 }
 
 /** Create a paid order once per orderRef (or return the original result). */
@@ -496,7 +723,6 @@ export async function createPaidOrder(input: OrderInput): Promise<OrderResult> {
         refundTxSignature: null,
         refundReference: null,
         refundExplorer: null,
-        tracking: null,
       });
     }
     return result;
@@ -507,14 +733,66 @@ export async function createPaidOrder(input: OrderInput): Promise<OrderResult> {
   }
 }
 
-function projectTracking(order: ShopifyOrder): TrackingInfo | null {
-  const info = order.fulfillments
-    ?.flatMap((fulfillment) => fulfillment.trackingInfo)
-    .find((tracking) => tracking.number);
-  if (!info?.number) return null;
+function projectSupplierOrder(order: ShopifyOrder): SupplierOrder {
+  const status = customAttribute(order, "supplier_order_status");
+  const allowed = new Set<SupplierOrder["status"]>([
+    "disabled",
+    "blocked",
+    "not_connected",
+    "pending",
+    "submitted",
+    "confirmed",
+    "failed",
+  ]);
+  if (!allowed.has(status as SupplierOrder["status"])) {
+    return disabledSupplierOrder();
+  }
+  const typedStatus = status as SupplierOrder["status"];
+  const ref = customAttribute(order, "supplier_order_ref") || null;
   return {
-    ...demoTrackingInfo(info.number, info.company || DEMO_CARRIER),
-    trackingUrl: info.url,
+    provider: "dsers",
+    status: typedStatus,
+    ref:
+      typedStatus === "disabled" ||
+      typedStatus === "blocked" ||
+      typedStatus === "not_connected"
+        ? null
+        : ref,
+    message:
+      customAttribute(order, "supplier_order_message") ||
+      (typedStatus === "disabled"
+        ? SUPPLIER_FULFILLMENT_DISABLED_MESSAGE
+        : typedStatus === "blocked"
+          ? SUPPLIER_FULFILLMENT_BLOCKED_MESSAGE
+          : typedStatus === "not_connected"
+            ? "Legacy order: supplier integration state was not connected."
+            : `DSers supplier order is ${typedStatus}.`),
+  };
+}
+
+export function trackingInfoFromFulfillments(
+  fulfillments: ShopifyFulfillment[] | null | undefined,
+): TrackingInfo | null {
+  const tracking = fulfillments
+    ?.flatMap((fulfillment) =>
+      fulfillment.trackingInfo.map((info) => ({
+        ...info,
+        fulfillmentStatus: fulfillment.status,
+      })),
+    )
+    .find((info) => info.number && info.company);
+  if (!tracking?.number || !tracking.company) return null;
+  return {
+    provider: "shopify",
+    carrier: tracking.company,
+    trackingNumber: tracking.number,
+    status: tracking.fulfillmentStatus || "unknown",
+    statusDetail: null,
+    trackingUrl: tracking.url,
+    estimatedDeliveryAt: null,
+    demo: false,
+    message:
+      "Real carrier tracking was read from the Shopify fulfillment record; Relay did not synthesize it.",
   };
 }
 
@@ -552,7 +830,10 @@ function projectOrderStatus(order: ShopifyOrder): OrderStatus {
       txSignature: refundTxSignature || null,
       explorer: customAttribute(order, "refund_explorer") || null,
     },
-    tracking: projectTracking(order),
+    supplierOrder: projectSupplierOrder(order),
+    // A fulfillment status alone is not supplier proof. Expose tracking only
+    // when Shopify carries both a real carrier and number.
+    tracking: trackingInfoFromFulfillments(order.fulfillments),
   };
 }
 
@@ -582,7 +863,8 @@ function projectMockOrderStatus(record: MockOrderRecord): OrderStatus {
       txSignature: record.refundTxSignature,
       explorer: record.refundExplorer,
     },
-    tracking: record.tracking,
+    supplierOrder: record.result.supplierOrder,
+    tracking: null,
   };
 }
 
@@ -620,6 +902,7 @@ function projectWalletOrder(order: ShopifyOrder): WalletOrder {
         txSignature,
       )}?cluster=${encodeURIComponent(config.cluster)}`
       : "",
+    supplierOrder: projectSupplierOrder(order),
   };
 }
 
@@ -642,6 +925,7 @@ export async function listOrdersByWallet(
         buyerWallet: input.buyerAddress,
         txSignature: input.txSignature,
         explorer: input.explorer,
+        supplierOrder: result.supplierOrder,
       }));
   }
 
@@ -891,90 +1175,14 @@ export async function markOrderRefunded(
   }
 }
 
-function fulfillmentTrackingResult(
-  order: ShopifyOrder,
-  replayed: boolean,
-): FulfillmentResult {
-  const status = projectOrderStatus(order);
-  if (status.fulfillmentStatus !== "FULFILLED" || !status.tracking) {
-    throw new Error(
-      `Shopify order ${status.orderRef} did not become FULFILLED with tracking`,
-    );
-  }
-  return {
-    shopifyOrderId: status.shopifyOrderId,
-    orderRef: status.orderRef,
-    name: status.name,
-    fulfillmentStatus: "FULFILLED",
-    tracking: status.tracking,
-    replayed,
-  };
-}
-
 async function fulfillOrderOnce(orderRef: string): Promise<FulfillmentResult> {
-  console.warn(
-    `[fulfillment] DEMO tracking number ${DEMO_TRACKING_NUMBER}; ` +
-      "no real parcel is being shipped",
+  const status = await getOrderStatus(orderRef);
+  throw new OrderLifecycleConflictError(
+    `Order ${status.orderRef} cannot be fulfilled: ${status.supplierOrder.message}`,
   );
-  if (config.mock) {
-    const record = findMockOrder(orderRef);
-    const replayed = record.fulfillmentStatus === "FULFILLED";
-    record.fulfillmentStatus = "FULFILLED";
-    record.tracking ??= demoTrackingInfo();
-    return {
-      shopifyOrderId: record.result.shopifyOrderId,
-      orderRef: record.input.orderRef,
-      name: record.result.name,
-      fulfillmentStatus: "FULFILLED",
-      tracking: record.tracking,
-      replayed,
-    };
-  }
-
-  let order = (await findOrder(orderRef, { required: true }))!;
-  if (order.displayFulfillmentStatus === "FULFILLED") {
-    return fulfillmentTrackingResult(order, true);
-  }
-  if (order.displayFinancialStatus !== "PAID") {
-    throw new OrderLifecycleConflictError(
-      `Order ${orderRef} must be PAID before fulfillment ` +
-        `(financialStatus=${order.displayFinancialStatus})`,
-    );
-  }
-  const fulfillmentOrders = (order.fulfillmentOrders?.nodes ?? []).filter(
-    (fulfillmentOrder) => fulfillmentOrder.status === "OPEN",
-  );
-  if (fulfillmentOrders.length === 0) {
-    throw new Error(`Shopify order ${orderRef} has no open fulfillment orders`);
-  }
-
-  const result = await shopifyGraphQL<FulfillmentCreateData>(
-    FULFILLMENT_CREATE,
-    {
-      fulfillment: {
-        lineItemsByFulfillmentOrder: fulfillmentOrders.map(
-          (fulfillmentOrder) => ({
-            fulfillmentOrderId: fulfillmentOrder.id,
-          }),
-        ),
-        notifyCustomer: false,
-        trackingInfo: {
-          company: DEMO_CARRIER,
-          number: DEMO_TRACKING_NUMBER,
-        },
-      },
-    },
-  );
-  const errors = result.fulfillmentCreate.userErrors;
-  if (errors.length || !result.fulfillmentCreate.fulfillment) {
-    throw new Error(`fulfillmentCreate failed: ${JSON.stringify(errors)}`);
-  }
-
-  order = (await findOrder(orderRef, { required: true }))!;
-  return fulfillmentTrackingResult(order, false);
 }
 
-/** Fulfill every open fulfillment order and attach an explicit demo waybill. */
+/** Refuse fulfillment until a real supplier order and carrier number exist. */
 export async function fulfillOrder(orderRef: string): Promise<FulfillmentResult> {
   const inFlight = inFlightFulfillments.get(orderRef);
   if (inFlight) return inFlight;
@@ -989,22 +1197,11 @@ export async function fulfillOrder(orderRef: string): Promise<FulfillmentResult>
   }
 }
 
-/** Look up the demo waybill through the official EasyPost Tracker API adapter. */
+/** Refuse tracking until a real supplier order supplies a real waybill. */
 export async function trackOrder(identifier: string): Promise<TrackingInfo> {
   const status = await getOrderStatus(identifier);
-  if (!status.tracking) {
-    throw new OrderLifecycleConflictError(
-      `Order ${status.orderRef} has no tracking number; fulfill it first`,
-    );
-  }
-  const tracking = await lookupShipmentTracking(
-    status.tracking.trackingNumber,
-    status.tracking.carrier,
+  if (status.tracking && !status.tracking.demo) return status.tracking;
+  throw new OrderLifecycleConflictError(
+    `Order ${status.orderRef} has no real tracking number: ${status.supplierOrder.message}`,
   );
-  return {
-    ...tracking,
-    trackingUrl: tracking.trackingUrl ?? status.tracking.trackingUrl,
-    demo: true,
-    message: DEMO_TRACKING_MESSAGE,
-  };
 }

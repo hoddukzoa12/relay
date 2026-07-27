@@ -21,6 +21,8 @@ from ..common.contracts import (
     CartMandate,
     DelegationApprovalRequired,
     IntentMandate,
+    StructuredShippingAddress,
+    format_shipping_address,
 )
 
 _LOG = logging.getLogger(__name__)
@@ -157,7 +159,10 @@ def require_live_delegation(
 
 
 def _storefront_intent(
-    query: str, budget: float, ship_to: str
+    query: str,
+    budget: float,
+    ship_to: str,
+    shipping_address: StructuredShippingAddress | None,
 ) -> dict[str, Any] | None:
     context = _STOREFRONT_CONTEXT.get()
     if context is None:
@@ -187,7 +192,7 @@ def _storefront_intent(
             f"allowance {allowance} USDC; approve a higher limit."
         )
 
-    return {
+    intent = {
         "user_cart_confirmation_required": False,
         "natural_language_description": query,
         "requires_refundability": False,
@@ -201,6 +206,9 @@ def _storefront_intent(
         "allowanceRemaining": status["allowanceRemaining"],
         "approvalTxSignature": context.approval_tx_signature,
     }
+    if shipping_address:
+        intent["shipping_address"] = shipping_address.model_dump(exclude_none=True)
+    return intent
 
 
 def search_catalog(
@@ -236,19 +244,25 @@ def search_catalog(
     for item in catalog.products:
         product = item.model_dump()
         try:
-            cost = Decimal(product["price"])
+            supplier_cost = product.pop("supplierCost", None)
+            if not supplier_cost:
+                continue
+            cost = Decimal(supplier_cost["amount"])
+            catalog_price = Decimal(product["price"])
             inventory = int(product["inventoryQuantity"])
         except (KeyError, TypeError, ValueError, InvalidOperation):
             continue
-        if inventory <= 0 or cost <= 0:
+        if inventory <= 0 or cost <= 0 or catalog_price <= 0:
             continue
-        price = (cost * multiplier).quantize(
+        price = (catalog_price * multiplier).quantize(
             Decimal("0.01"), rounding=ROUND_HALF_UP
         )
         candidate = {
             **product,
             "description": str(product.get("description", ""))[:600],
-            "catalogPrice": format(cost, "f"),
+            # Public storefront price only. Supplier cost stays inside the
+            # broker/order ledger and is never returned to chat or page HTML.
+            "catalogPrice": str(product["price"]),
             "price": format(price, ".2f"),
             "currency": "USDC",
         }
@@ -305,13 +319,28 @@ def request_quote(
     delegated_intent: IntentMandate | None = None,
     *,
     delegator: str | None = None,
+    shipping_address: StructuredShippingAddress | dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     """Ask the shopping agent (A2A) for a product + agent-native payment request.
 
     Returns the PaymentRequest dict.
     """
+    structured = (
+        shipping_address
+        if isinstance(shipping_address, StructuredShippingAddress)
+        else (
+            StructuredShippingAddress(**shipping_address)
+            if shipping_address
+            else None
+        )
+    )
+    if structured:
+        ship_to = format_shipping_address(structured)
+
     if delegated_intent is None:
-        unsigned_intent = _storefront_intent(query, budget, ship_to)
+        unsigned_intent = _storefront_intent(
+            query, budget, ship_to, structured
+        )
         if unsigned_intent is None:
             unsigned_intent = {
                 "user_cart_confirmation_required": False,
@@ -323,6 +352,10 @@ def request_quote(
                     datetime.now(timezone.utc) + timedelta(minutes=15)
                 ).isoformat(),
             }
+            if structured:
+                unsigned_intent["shipping_address"] = structured.model_dump(
+                    exclude_none=True
+                )
             if delegator:
                 # Quoting is non-spending, so do not reject a usable item merely
                 # because the caller's budget ceiling exceeds its allowance.

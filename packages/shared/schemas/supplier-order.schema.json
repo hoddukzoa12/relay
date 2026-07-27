@@ -1,0 +1,30 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://agentic-resell-broker/schemas/supplier-order.json",
+  "title": "SupplierOrder",
+  "description": "Honest supplier-side order state. disabled/blocked with a null ref means no supplier order was created; pending means Shopify accepted an eligible order but DSers is unconfirmed.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["provider", "status", "ref", "message"],
+  "properties": {
+    "provider": { "const": "dsers" },
+    "status": {
+      "enum": [
+        "disabled",
+        "blocked",
+        "not_connected",
+        "pending",
+        "submitted",
+        "confirmed",
+        "failed"
+      ]
+    },
+    "ref": {
+      "oneOf": [
+        { "type": "string", "minLength": 1 },
+        { "type": "null" }
+      ]
+    },
+    "message": { "type": "string", "minLength": 1 }
+  }
+}

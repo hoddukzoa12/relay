@@ -1,0 +1,30 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://agentic-resell-broker/schemas/structured-shipping-address.json",
+  "title": "StructuredShippingAddress",
+  "description": "Buyer-supplied destination used for supplier fulfillment only when the monetary safety gate is enabled.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "name",
+    "address1",
+    "city",
+    "province",
+    "country",
+    "zip"
+  ],
+  "properties": {
+    "name": { "type": "string", "minLength": 1 },
+    "address1": { "type": "string", "minLength": 1 },
+    "address2": { "type": ["string", "null"], "minLength": 1 },
+    "city": { "type": "string", "minLength": 1 },
+    "province": { "type": "string", "minLength": 1 },
+    "country": {
+      "type": "string",
+      "pattern": "^[A-Z]{2}$",
+      "description": "ISO-3166-1 alpha-2 country code"
+    },
+    "zip": { "type": "string", "minLength": 3 },
+    "phone": { "type": ["string", "null"], "minLength": 5 }
+  }
+}

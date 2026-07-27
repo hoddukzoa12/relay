@@ -72,6 +72,12 @@ The deployment deletes the three Artifact Registry image packages after Cloud
 Run imports the revisions. This avoids ongoing image-storage cost; a repeat
 simply rebuilds them.
 
+`SUPPLIER_FULFILLMENT_ENABLED` is deliberately non-secret but financially
+dangerous. The deploy script defaults it to `false`; setting it to `true` can
+send every paid order with a complete structured address into the connected
+DSers/AliExpress auto-ordering path and incur a real supplier charge. A human
+must review address collection and expected order count before enabling it.
+
 ## Secret Manager layout
 
 Never pass secret values through `--set-env-vars`. The provisioner creates six

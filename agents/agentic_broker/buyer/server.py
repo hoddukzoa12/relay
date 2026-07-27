@@ -16,7 +16,11 @@ from pydantic import BaseModel, Field
 from ..common import service_clients
 from ..common.agent_cards import buyer_agent_card
 from ..common.config import settings
-from ..common.contracts import IntentMandate
+from ..common.contracts import (
+    IntentMandate,
+    StructuredShippingAddress,
+    format_shipping_address,
+)
 from ..common.mandates import verify_wallet_signature
 from . import auth, conversation, flow, tools as buyer_tools
 
@@ -53,6 +57,7 @@ class BuyRequest(BaseModel):
     query: Optional[str] = None
     budget: Optional[float] = None
     shipTo: Optional[str] = None
+    shippingAddress: Optional[StructuredShippingAddress] = None
     intentMandate: Optional[IntentMandate] = None
     approvalTxSignature: Optional[str] = Field(default=None, min_length=1)
 
@@ -297,6 +302,7 @@ def buy(
             return flow.buy_from_text(
                 body.text,
                 identity_wallet=identity.wallet_address if identity else None,
+                shipping_address=body.shippingAddress,
             )
         except buyer_tools.DelegationApprovalRequiredError as exc:
             raise HTTPException(status_code=409, detail=exc.response) from exc
@@ -306,7 +312,11 @@ def buy(
         if body.budget is not None
         else settings.default_budget_usdc
     )
-    ship_to = body.shipTo or settings.default_ship_to
+    ship_to = (
+        format_shipping_address(body.shippingAddress)
+        if body.shippingAddress
+        else body.shipTo or settings.default_ship_to
+    )
 
     if body.intentMandate is not None:
         if identity is None:
@@ -343,6 +353,7 @@ def buy(
             mandate.user_cart_confirmation_required
             or mandate.natural_language_description != query
             or mandate.ship_to != ship_to
+            or mandate.shipping_address != body.shippingAddress
             or Decimal(mandate.price_ceiling.amount) != Decimal(str(budget))
         ):
             raise HTTPException(
@@ -357,6 +368,7 @@ def buy(
             ship_to=ship_to,
             intent_mandate=body.intentMandate,
             identity_wallet=identity.wallet_address if identity else None,
+            shipping_address=body.shippingAddress,
         )
     except buyer_tools.DelegationApprovalRequiredError as exc:
         raise HTTPException(status_code=409, detail=exc.response) from exc
@@ -383,12 +395,18 @@ def web_buy(
                 return flow.buy_from_text(
                     body.text,
                     identity_wallet=identity.wallet_address,
+                    shipping_address=body.shippingAddress,
                 )
             return flow.buy(
                 query=body.query or "wireless earbuds",
                 budget=body.budget if body.budget is not None else 30.0,
-                ship_to=body.shipTo or settings.default_ship_to,
+                ship_to=(
+                    format_shipping_address(body.shippingAddress)
+                    if body.shippingAddress
+                    else body.shipTo or settings.default_ship_to
+                ),
                 identity_wallet=identity.wallet_address,
+                shipping_address=body.shippingAddress,
             )
     except buyer_tools.DelegationApprovalRequiredError as exc:
         raise HTTPException(status_code=409, detail=exc.response) from exc

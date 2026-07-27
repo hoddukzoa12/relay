@@ -111,7 +111,7 @@ Payer selection follows the authenticated principal, not the transport:
 | A2A carrying a verified/signed human identity | that signed user's wallet via SPL delegation |
 | MCP API-key service principal with no user | configured buyer-agent wallet |
 | CLI, rehearsal, or legacy request with no human principal | configured buyer-agent wallet |
-| Broker supplier purchase (Leg 2) | broker wallet |
+| Broker supplier purchase (Leg 2) | External DSers/AliExpress account via Shopify auto-ordering, only when the default-off supplier money gate and complete structured address are both present |
 
 The buyer-agent wallet remains transaction signer/delegate and fee payer for a
 user-funded Leg 1 purchase, so repeat purchases need zero user signatures.
@@ -148,7 +148,7 @@ also Base, Polygon. → an HTTP wrapper over the same USDC-on-Solana we already 
 
 | Current (REST) | A2A/AP2 target |
 |---|---|
-| `PurchaseIntent {query,budget,shipTo}` | **IntentMandate** (buyer-signed; web mandates also bind the Clerk wallet's SPL delegation proof) |
+| `PurchaseIntent {query,budget,shipTo,shippingAddress?}` | **IntentMandate** (buyer-signed; structured address is signed when supplied, and web mandates also bind the Clerk wallet's SPL delegation proof) |
 | `PaymentRequest {title,price,payTo,reference}` | **CartMandate** (merchant-signed) |
 | buyer autonomous pay authorization | **PaymentMandate** (buyer-signed) → settled via Solana Pay tx (guaranteed) or x402 (#6) |
 | `POST /a2a/quote`, `/a2a/settle` (REST) | JSON-RPC `message/send` with mandate **DataParts** (add endpoint; keep REST for compat) |

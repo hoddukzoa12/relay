@@ -1,11 +1,15 @@
 # Relay order lifecycle
 
-Relay's autonomous path does not stop at payment:
+Relay separates autonomous payment from a real-money supplier handoff:
 
 ```text
-buyer → merchant payment
+buyer → merchant payment → Shopify paid order
+                              ├─ gate OFF → supplierOrder:disabled
+                              ├─ incomplete address → supplierOrder:blocked
+                              └─ gate ON + complete shippingAddress
+                                      → DSers automation → supplierOrder:pending
         ↓
-lookup → fulfillment → demo tracking
+      lookup
         ↓
 merchant → buyer full refund
 ```
@@ -16,10 +20,10 @@ The shopping agent on `:8091` exposes:
 
 | Method | Path | Result |
 |---|---|---|
-| `GET` | `/orders/{orderRef-or-name}` | `OrderStatus` with real SKU, amount, fulfillment/refund state, and on-chain proof |
+| `GET` | `/orders/{orderRef-or-name}` | `OrderStatus` with real SKU, amount, supplier/refund state, and on-chain proof |
 | `POST` | `/orders/{orderRef-or-name}/refund` | `RefundResult` with payment and refund explorer links |
-| `POST` | `/orders/{orderRef}/fulfill` | `FulfillmentResult` verified as `FULFILLED` in Shopify |
-| `GET` | `/orders/{orderRef-or-name}/tracking` | `TrackingInfo` from the carrier-provider interface |
+| `POST` | `/orders/{orderRef}/fulfill` | `409` while no real supplier order exists |
+| `GET` | `/orders/{orderRef-or-name}/tracking` | `409` while no real supplier shipment exists |
 
 The commerce service on `:8082` owns Shopify lookup and mutations. The payments
 service on `:8081` owns the on-chain `POST /refunds` primitive.
@@ -49,22 +53,75 @@ Shopify `refundCreate` additionally uses its official `@idempotent` directive on
 API versions that support it. Older configured API versions rely on the order
 financial status plus Relay's process CAS and custom-attribute proof.
 
-## Fulfillment and tracking
+## Supplier order money gate
 
-Fulfillment queries Shopify `fulfillmentOrders`, passes every open fulfillment
-order to `fulfillmentCreate`, and verifies the aggregate order status becomes
-`FULFILLED`.
+The Shopify store already has DSers/AliExpress automatic ordering enabled.
+DSers could not act on earlier Relay orders because Relay stored only a free
+text `ship_to` custom attribute while Shopify `shippingAddress` was empty.
+Relay now carries a buyer-supplied structured address through PurchaseIntent,
+the signed AP2 IntentMandate, broker state, and the commerce order input.
 
-The tracking layer implements a separable `CarrierTrackingProvider`.
-`EasyPostTrackingProvider` calls EasyPost's official
-[`POST /v2/trackers`](https://docs.easypost.com/docs/trackers) endpoint. Set
-`EASYPOST_API_KEY` to exercise that adapter.
+Commerce writes `shippingAddress` only when both conditions hold:
 
-The current tracking number is EasyPost test value `EZ2000000002`. Every
-tracking response sets `demo: true` and says explicitly that Relay did not
-create or ship a real parcel. With no API key, the endpoint returns
-`official_api_not_configured`; it never scrapes a marketplace account. A real
-waybill from #36 can replace the number without changing the interface.
+1. `SUPPLIER_FULFILLMENT_ENABLED=true`;
+2. recipient name, address1, city, Shopify-compatible province/state code,
+   ISO-2 country, and ZIP/postal code are complete and not obvious placeholders.
+
+Address2 and phone are optional. The legacy free-text `shipTo` is retained, and
+is derived from the structured address when one is present. Missing fields are
+never defaulted or invented.
+
+> **Financial consequence:** enabling the flag can cause the external
+> DSers/AliExpress account to charge the actual supplier cost (currently about
+> USD 2–4.70) for every new paid order with a complete address. The default is
+> `false`; rehearsals must keep it false.
+
+The supplier state is explicit:
+
+```json
+{
+  "supplierOrder": {
+    "provider": "dsers",
+    "status": "disabled",
+    "ref": null,
+    "message": "Supplier fulfillment is disabled; no structured Shopify shipping address or supplier order was created."
+  }
+}
+```
+
+| Status | Meaning |
+|---|---|
+| `disabled` | Money gate off; Shopify `shippingAddress` omitted and no supplier order requested |
+| `blocked` | Gate on, but address incomplete/placeholder; `shippingAddress` still omitted |
+| `pending` | Complete address submitted to Shopify; DSers outcome and supplier ref are not yet confirmed |
+| `submitted` / `confirmed` / `failed` | Reserved for a future authoritative DSers readback |
+
+The official DSers MCP surface still has no purchase-order or tracking tool, so
+Relay cannot synchronously prove the downstream DSers result or obtain its
+reference. It therefore never upgrades `pending` merely because Shopify
+accepted the order. Relay also does not call Shopify `fulfillmentCreate` or
+synthesize a waybill. Fulfill and tracking endpoints fail closed with `409`
+until authoritative supplier/shipment evidence exists.
+
+The old EasyPost test adapter was removed from the commerce service. A Shopify
+fulfillment status by itself is not tracking proof. Relay returns tracking only
+when Shopify contains both a non-empty carrier and tracking number; that value
+is labeled `provider: "shopify"` and `demo: false`. Otherwise the tracking
+endpoint returns `409`. The future real source is the waybill DSers synchronizes
+back into Shopify fulfillment; do not reintroduce EasyPost as a synthetic
+substitute.
+
+## Supplier-cost and margin evidence
+
+Supplier costs are a dated DSers MCP snapshot stored in Shopify variant
+metafields that are Admin-only. The sync validates exact product and variant
+GIDs, vendor, and SKU, and never title-matches. Public catalog/chat/order
+projections do not expose the supplier cost or projected margin.
+
+For each Shopify order, Relay stores the selected snapshot and a projected
+gross-margin record in private order custom attributes. The basis is explicitly
+`snapshot_usd_usdc_parity_excludes_shipping_tax`; it is not realized profit and
+does not include shipping, tax, refunds, or exchange-rate movement.
 
 ## Contracts
 
@@ -72,14 +129,20 @@ The lifecycle contracts are mirrored in:
 
 - `packages/shared/src/index.ts`
 - `agents/agentic_broker/common/contracts.py`
+- `packages/shared/schemas/structured-shipping-address.schema.json`
+- `packages/shared/schemas/intent-mandate.schema.json`
 - `packages/shared/schemas/order-status.schema.json`
+- `packages/shared/schemas/supplier-order.schema.json`
 - `packages/shared/schemas/refund-result.schema.json`
 - `packages/shared/schemas/fulfillment-result.schema.json`
 - `packages/shared/schemas/tracking-info.schema.json`
 
 ## Live evidence
 
-The issue #26 verification run, including both explorer links, token balance
-deltas, single-signature refund-reference proof, Shopify refund status, and
-fulfillment result, is recorded in
+The historical issue #26 verification run, including both explorer links,
+token balance deltas, single-signature refund-reference proof, Shopify refund
+status, and its explicitly demo-only fulfillment result, is recorded in
 [`docs/evidence/issue-26-order-lifecycle.md`](evidence/issue-26-order-lifecycle.md).
+The current DSers capability/authentication spike, supplier-cost persistence,
+and truthful Leg 2 behavior are recorded in
+[`docs/evidence/issue-52-dsers-mcp.md`](evidence/issue-52-dsers-mcp.md).

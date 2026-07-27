@@ -34,6 +34,37 @@ class BuyerDelegationTest(unittest.TestCase):
         self.assertIsNone(buy.call_args.kwargs["intent_mandate"])
         self.assertIsNone(buy.call_args.kwargs["identity_wallet"])
 
+    def test_structured_address_takes_precedence_over_legacy_ship_to(self) -> None:
+        result = {"ok": True, "confirmation": {"status": "paid"}}
+        address = {
+            "name": "Grace Hopper",
+            "address1": "123 Main St",
+            "city": "Arlington",
+            "province": "VA",
+            "country": "US",
+            "zip": "22201",
+        }
+        with patch.object(server.flow, "buy", return_value=result) as buy:
+            response = self.client.post(
+                "/buy",
+                json={
+                    "query": "earbuds",
+                    "budget": 5,
+                    "shipTo": "ignored legacy destination",
+                    "shippingAddress": address,
+                },
+            )
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(
+            buy.call_args.kwargs["ship_to"],
+            "Grace Hopper, 123 Main St, Arlington, VA, 22201, US",
+        )
+        self.assertEqual(
+            buy.call_args.kwargs["shipping_address"].model_dump(exclude_none=True),
+            address,
+        )
+
     def test_authenticated_intent_is_bound_to_clerk_wallet(self) -> None:
         wallet = "Bn7UDWnm59HtG4zeSS2gF2MWT8bADFDuVaG5Y95HLoFf"
         mandate = {
