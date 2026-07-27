@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from dataclasses import replace
 from decimal import Decimal
 from types import SimpleNamespace
 from unittest.mock import patch
@@ -10,6 +11,21 @@ from agentic_broker.shopping import dsers_sourcing
 
 
 SOURCE_URL = "https://www.aliexpress.com/item/1005001234567890.html"
+
+
+@pytest.fixture(autouse=True)
+def _isolated_target_store(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Pin the store filter to this module's fake store.
+
+    `settings` is loaded from the developer's `.env`, so a real
+    DSERS_TARGET_STORE would filter the fake catalogue down to nothing and
+    fail these tests everywhere except CI, which has no `.env`.
+    """
+    monkeypatch.setattr(
+        dsers_sourcing,
+        "settings",
+        replace(dsers_sourcing.settings, dsers_target_store="store-1"),
+    )
 
 
 class FakeDSers:
