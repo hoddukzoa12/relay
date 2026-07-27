@@ -13,6 +13,7 @@
     "dev:commerce": "pnpm --filter @arb/commerce dev",
     "dev:services": "pnpm -r --parallel --filter \"./services/*\" dev",
     "seed:catalog:fallback": "pnpm --filter @arb/commerce exec tsx ../../scripts/seed-shopify-catalog.mjs",
+    "test:storefront-auth": "node --test scripts/relay-auth-client.test.mjs",
     "test:seed-policy": "node --test scripts/shopify-seed-policy.test.mjs",
     "build": "pnpm -r build",
     "typecheck": "pnpm -r typecheck",

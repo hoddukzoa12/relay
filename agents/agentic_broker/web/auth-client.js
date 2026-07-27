@@ -3,6 +3,9 @@
   if (window.RelayAuth) return;
 
   const loadedScripts = new Map();
+  const AUTH_RETURN_PARAM = "relay_auth_return";
+  const AUTH_RETURN_TTL_MS = 30 * 60 * 1000;
+  const AUTH_TELEMETRY_LIMIT = 40;
 
   function loadScript(src, attributes = {}) {
     if (loadedScripts.has(src)) return loadedScripts.get(src);
@@ -45,6 +48,24 @@
     } catch {
       throw new Error("The Clerk publishable key is invalid.");
     }
+  }
+
+  function currentRelativeUrl({ markAuthReturn = false } = {}) {
+    const current = new URL(window.location.href);
+    if (markAuthReturn) current.searchParams.set(AUTH_RETURN_PARAM, "1");
+    return `${current.pathname}${current.search}${current.hash}`;
+  }
+
+  function shopifySignInUrl(
+    configuredUrl = "/customer_authentication/login",
+    returnTo = currentRelativeUrl({ markAuthReturn: true }),
+  ) {
+    const login = new URL(configuredUrl, window.location.origin);
+    if (login.origin !== window.location.origin) {
+      throw new Error("Shopify sign-in must stay on this storefront.");
+    }
+    login.searchParams.set("return_to", returnTo);
+    return `${login.pathname}${login.search}`;
   }
 
   function canonicalize(value) {
@@ -144,6 +165,10 @@
       this.baseUrl = baseUrl.replace(/\/+$/, "");
       this.clerk = null;
       this.identity = null;
+      this.sessionActive = false;
+      this.authBranch = "initializing";
+      this.authBranchSource = "initial";
+      this.fallbackActive = false;
       this.listeners = new Set();
       this.ready = this.initialize();
     }
@@ -156,8 +181,10 @@
       const response = await fetch(this.url("/auth/config"), { mode: "cors" });
       const config = await response.json();
       if (!response.ok || !config.configured || !config.publishableKey) {
-        return { configured: false };
+        this.setAuthBranch("clerk_unavailable");
+        return this.status(false);
       }
+      const returnedFromShopify = this.consumeShopifyReturn();
       const domain = frontendDomain(config.publishableKey);
       await loadScript(`https://${domain}/npm/@clerk/ui@1/dist/ui.browser.js`);
       await loadScript(
@@ -169,13 +196,126 @@
         ui: { ClerkUI: window.__internal_ClerkUICtor },
       });
       this.clerk.addListener(() => {
-        this.refreshIdentity().catch(() => {
-          this.identity = null;
-          this.emit();
-        });
+        const previousSessionActive = this.sessionActive;
+        this.refreshIdentity({ notify: false })
+          .then(() => {
+            if (this.sessionActive && !previousSessionActive && this.fallbackActive) {
+              this.fallbackActive = false;
+              this.setAuthBranch("clerk_session_active", "in_page_fallback");
+            } else if (!this.sessionActive && previousSessionActive) {
+              this.setAuthBranch("shopify_login_required", "session_ended");
+            } else {
+              this.emit();
+            }
+          })
+          .catch(() => {
+            this.identity = null;
+            this.emit();
+          });
       });
-      await this.refreshIdentity();
-      return { configured: true };
+      await this.refreshIdentity({ notify: false });
+      if (this.sessionActive) {
+        this.setAuthBranch(
+          "clerk_session_active",
+          returnedFromShopify ? "shopify_return" : "initial",
+        );
+      } else if (returnedFromShopify) {
+        this.fallbackActive = true;
+        this.setAuthBranch("shopify_return_fallback", "shopify_return");
+      } else {
+        this.setAuthBranch("shopify_login_required", "initial");
+      }
+      return this.status(true);
+    }
+
+    status(configured = Boolean(this.clerk)) {
+      return {
+        configured,
+        branch: this.authBranch,
+        source: this.authBranchSource,
+        fallbackRequired: this.authBranch === "shopify_return_fallback",
+        sessionActive: this.sessionActive,
+        walletVerified: Boolean(this.identity?.walletAddress),
+      };
+    }
+
+    returnMarkerKey() {
+      return `relay:shopify-auth-return:v1:${this.baseUrl}`;
+    }
+
+    telemetryKey() {
+      return `relay:auth-telemetry:v1:${this.baseUrl}`;
+    }
+
+    saveShopifyReturnMarker() {
+      try {
+        window.sessionStorage.setItem(
+          this.returnMarkerKey(),
+          JSON.stringify({ startedAt: Date.now() }),
+        );
+      } catch {}
+    }
+
+    consumeShopifyReturn() {
+      const current = new URL(window.location.href);
+      const returnParamPresent = current.searchParams.get(AUTH_RETURN_PARAM) === "1";
+      let markerPresent = false;
+      try {
+        const raw = window.sessionStorage.getItem(this.returnMarkerKey());
+        window.sessionStorage.removeItem(this.returnMarkerKey());
+        const marker = raw ? JSON.parse(raw) : null;
+        markerPresent = Number.isFinite(marker?.startedAt) &&
+          Date.now() - marker.startedAt <= AUTH_RETURN_TTL_MS;
+      } catch {}
+      if (returnParamPresent) {
+        try {
+          current.searchParams.delete(AUTH_RETURN_PARAM);
+          window.history.replaceState(
+            window.history.state,
+            "",
+            `${current.pathname}${current.search}${current.hash}`,
+          );
+        } catch {}
+      }
+      return returnParamPresent || markerPresent;
+    }
+
+    telemetry() {
+      try {
+        const entries = JSON.parse(
+          window.localStorage.getItem(this.telemetryKey()) || "[]",
+        );
+        return Array.isArray(entries) ? entries : [];
+      } catch {
+        return [];
+      }
+    }
+
+    recordAuthEvent(event, source = this.authBranchSource) {
+      const record = {
+        event,
+        source,
+        at: new Date().toISOString(),
+        path: window.location.pathname,
+      };
+      try {
+        const entries = [...this.telemetry(), record].slice(-AUTH_TELEMETRY_LIMIT);
+        window.localStorage.setItem(this.telemetryKey(), JSON.stringify(entries));
+      } catch {}
+      try {
+        console.info("[Relay auth]", record);
+        window.dispatchEvent(new CustomEvent("relay:auth-branch", {
+          detail: record,
+        }));
+      } catch {}
+      return record;
+    }
+
+    setAuthBranch(branch, source = this.authBranchSource) {
+      this.authBranch = branch;
+      this.authBranchSource = source;
+      this.recordAuthEvent(branch, source);
+      this.emit();
     }
 
     subscribe(listener) {
@@ -193,25 +333,41 @@
       return this.clerk?.session?.getToken?.() || null;
     }
 
-    async refreshIdentity() {
+    async refreshIdentity({ notify = true } = {}) {
       const token = await this.token();
       if (!token) {
+        this.sessionActive = false;
         this.identity = null;
-        this.emit();
+        if (notify) this.emit();
         return null;
       }
+      this.sessionActive = true;
       const response = await fetch(this.url("/auth/me"), {
         mode: "cors",
         headers: { Authorization: `Bearer ${token}` },
       });
       if (!response.ok) {
-        this.identity = null;
-        this.emit();
-        return null;
+        this.identity = {
+          userId: this.clerk?.user?.id || "",
+          walletAddress: "",
+          displayName: this.displayName(),
+        };
+        if (notify) this.emit();
+        return this.identity;
       }
-      this.identity = await response.json();
-      this.emit();
+      this.identity = {
+        ...await response.json(),
+        displayName: this.displayName(),
+      };
+      if (notify) this.emit();
       return this.identity;
+    }
+
+    displayName() {
+      const user = this.clerk?.user;
+      const fullName = [user?.firstName, user?.lastName].filter(Boolean).join(" ");
+      const email = user?.primaryEmailAddress?.emailAddress || "";
+      return fullName || user?.username || email.split("@")[0] || "Shopify 고객";
     }
 
     async signIn() {
@@ -220,9 +376,35 @@
       this.clerk.openSignIn();
     }
 
+    async signInViaShopify(configuredUrl = "/customer_authentication/login") {
+      const status = await this.ready;
+      if (!status.configured) throw new Error("Clerk is not configured.");
+      if (!this.sessionActive) await this.refreshIdentity();
+      if (this.sessionActive) {
+        this.setAuthBranch("clerk_session_active", "pre_redirect_recheck");
+        return false;
+      }
+      this.saveShopifyReturnMarker();
+      this.recordAuthEvent("shopify_login_redirect", "shopify");
+      window.location.assign(shopifySignInUrl(configuredUrl));
+      return true;
+    }
+
+    async openFallbackSignIn() {
+      const status = await this.ready;
+      if (!status.configured) throw new Error("Clerk is not configured.");
+      if (!this.sessionActive) await this.refreshIdentity();
+      if (this.sessionActive) return this.identity;
+      this.fallbackActive = true;
+      this.recordAuthEvent("clerk_fallback_opened", "shopify_return");
+      this.clerk.openSignIn();
+      return null;
+    }
+
     async signOut() {
       await this.ready;
       await this.clerk?.signOut?.();
+      this.sessionActive = false;
       this.identity = null;
       this.emit();
     }
@@ -372,5 +554,6 @@
       return clients.get(key);
     },
     canonicalMandateJson,
+    shopifySignInUrl,
   };
 })();

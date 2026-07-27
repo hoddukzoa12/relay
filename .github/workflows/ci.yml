@@ -15,6 +15,7 @@ jobs:
           node-version: 20
           cache: pnpm
       - run: pnpm install --no-frozen-lockfile
+      - run: pnpm test:storefront-auth
       - run: pnpm -r typecheck
 
   python:
