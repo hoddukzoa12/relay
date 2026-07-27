@@ -46,6 +46,28 @@ class Settings:
     google_api_key: str = os.getenv("GOOGLE_API_KEY", "")
     gemini_model: str = os.getenv("GEMINI_MODEL", "gemini-2.5-flash")
 
+    # DSers is an additive supplier-catalog path. Leaving the secret ID empty
+    # disables it without affecting catalog search, quoting, or settlement.
+    dsers_mcp_url: str = os.getenv(
+        "DSERS_MCP_URL", "https://mcp.dsers.com/dropshipping/mcp"
+    ).rstrip("/")
+    dsers_oauth_token_url: str = os.getenv(
+        "DSERS_OAUTH_TOKEN_URL", "https://mcp.dsers.com/oauth/token"
+    ).rstrip("/")
+    dsers_secret_project_id: str = os.getenv(
+        "DSERS_SECRET_PROJECT_ID", os.getenv("GCP_PROJECT_ID", "")
+    )
+    dsers_secret_id: str = os.getenv("DSERS_SECRET_ID", "")
+    dsers_secret_alias: str = os.getenv(
+        "DSERS_SECRET_ALIAS", "relay-active"
+    )
+    dsers_target_store: str = os.getenv("DSERS_TARGET_STORE", "")
+    dsers_ship_to: str = os.getenv("DSERS_SHIP_TO", "US").upper()
+    dsers_ship_from: str = os.getenv("DSERS_SHIP_FROM", "CN").upper()
+    dsers_max_imports_per_request: int = int(
+        os.getenv("DSERS_MAX_IMPORTS_PER_REQUEST", "1")
+    )
+
     clerk_publishable_key: str = os.getenv("CLERK_PUBLISHABLE_KEY", "")
     clerk_secret_key: str = os.getenv("CLERK_SECRET_KEY", "")
     clerk_issuer: str = os.getenv("CLERK_ISSUER", "").rstrip("/")

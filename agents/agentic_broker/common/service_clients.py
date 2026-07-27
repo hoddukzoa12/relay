@@ -232,6 +232,17 @@ def commerce_products(query: str, limit: int = 20) -> dict[str, Any]:
     )
 
 
+def commerce_product_by_handle(handle: str) -> dict[str, Any]:
+    """Resolve the exact DSers-provided Shopify handle; never use a title."""
+    encoded = quote(handle, safe="")
+    return _get(f"{settings.commerce_url}/products/by-handle/{encoded}")
+
+
+def commerce_mark_sourced_product(payload: dict[str, Any]) -> dict[str, Any]:
+    """Bind one exact Shopify product ID to DSers provenance and costs."""
+    return _post(f"{settings.commerce_url}/products/sourcing-metadata", payload)
+
+
 def commerce_create_order(payload: dict[str, Any]) -> dict[str, Any]:
     return _post(f"{settings.commerce_url}/orders", payload)
 
@@ -299,6 +310,14 @@ def shopping_order(identifier: str) -> dict[str, Any]:
     """Read an order through the shopping-agent lifecycle API."""
     encoded = quote(identifier, safe="")
     return _get(f"{settings.shopping_agent_url}/orders/{encoded}")
+
+
+def shopping_source_catalog(query: str, budget: float) -> dict[str, Any]:
+    """Ask the shopping broker to extend the catalog from DSers if needed."""
+    return _post(
+        f"{settings.shopping_agent_url}/catalog/source",
+        {"query": query, "budget": budget},
+    )
 
 
 def shopping_refund_order(identifier: str) -> dict[str, Any]:

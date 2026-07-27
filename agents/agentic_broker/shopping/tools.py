@@ -12,12 +12,14 @@ from typing import Any
 from ..common import llm, service_clients
 from ..common.config import settings
 from ..common.contracts import (
+    CatalogProduct,
     CatalogProductsResponse,
     FulfillmentResult,
     OrderStatus,
     RefundResult,
     TrackingInfo,
 )
+from . import dsers_sourcing
 
 
 def _usd(x: float) -> str:
@@ -44,46 +46,100 @@ def source_and_price(query: str, budget_amount: float) -> dict[str, Any]:
 
     budget = Decimal(str(budget_amount))
     multiplier = Decimal("1") + Decimal(str(settings.markup_pct)) / Decimal("100")
-    candidates: list[dict[str, Any]] = []
-    for catalog_product in catalog.products:
-        product = catalog_product.model_dump()
-        try:
-            inventory = int(product["inventoryQuantity"])
-            supplier_cost = product["supplierCost"]
-            if not supplier_cost:
+
+    def safe_candidates(
+        products: list[CatalogProduct | dict[str, Any]],
+        *,
+        require_relevance: bool,
+    ) -> list[dict[str, Any]]:
+        candidates: list[dict[str, Any]] = []
+        for catalog_product in products:
+            product = (
+                catalog_product.model_dump()
+                if isinstance(catalog_product, CatalogProduct)
+                else catalog_product
+            )
+            if require_relevance and llm.catalog_relevance(product, query) <= 0:
                 continue
-            cost = Decimal(str(supplier_cost["amount"]))
-            catalog_price = Decimal(str(product["price"]))
-        except (KeyError, TypeError, ValueError, InvalidOperation):
-            continue
-        if (
-            inventory <= 0
-            or cost <= 0
-            or catalog_price <= 0
-            or not product.get("variantId")
-            or not product.get("sku")
-        ):
-            continue
-        # Keep the store's reviewed USD catalog price as the resale-price basis.
-        # The DSers value is independent margin evidence and must never silently
-        # reprice Shopify (DSers has reported a divergent KRW store default).
-        sale_price = (catalog_price * multiplier).quantize(
-            Decimal("0.01"), rounding=ROUND_HALF_UP
-        )
-        if sale_price > budget:
-            continue
-        candidates.append(
-            {
-                **product,
-                "price": float(catalog_price),
-                "salePrice": float(sale_price),
-            }
-        )
+            try:
+                inventory = int(product["inventoryQuantity"])
+                supplier_cost = product["supplierCost"]
+                if not supplier_cost:
+                    continue
+                cost = Decimal(str(supplier_cost["amount"]))
+                catalog_price = Decimal(str(product["price"]))
+            except (KeyError, TypeError, ValueError, InvalidOperation):
+                continue
+            if (
+                inventory <= 0
+                or cost <= 0
+                or catalog_price <= 0
+                or not product.get("variantId")
+                or not product.get("sku")
+            ):
+                continue
+            # Keep the store's reviewed USD catalog price as the resale-price
+            # basis. Supplier cost is independent margin evidence and never
+            # silently reprices Shopify.
+            sale_price = (catalog_price * multiplier).quantize(
+                Decimal("0.01"), rounding=ROUND_HALF_UP
+            )
+            if sale_price > budget:
+                continue
+            candidates.append(
+                {
+                    **product,
+                    "price": float(catalog_price),
+                    "salePrice": float(sale_price),
+                }
+            )
+        return candidates
+
+    candidates = safe_candidates(catalog.products, require_relevance=True)
+    sourcing: dict[str, Any] | None = None
+    if not candidates:
+        try:
+            sourcing = dsers_sourcing.source_missing_product(
+                query, budget_amount
+            )
+            metadata = sourcing.get("metadata", {})
+            sourced_product = metadata.get("product")
+            product_id = str(sourcing.get("productId") or "")
+            if not isinstance(sourced_product, dict):
+                refreshed = CatalogProductsResponse(
+                    **service_clients.commerce_products("", limit=50)
+                )
+                sourced_product = next(
+                    (
+                        product.model_dump()
+                        for product in refreshed.products
+                        if product.productId == product_id
+                    ),
+                    None,
+                )
+            if isinstance(sourced_product, dict):
+                candidates = safe_candidates(
+                    [sourced_product],
+                    require_relevance=False,
+                )
+        except dsers_sourcing.DSersSourcingUnavailable as exc:
+            raise ValueError(
+                f"no suitable in-stock catalog product matches {query!r} "
+                f"within {budget_amount:.2f} USDC; new DSers sourcing is "
+                f"currently unavailable ({exc}). Existing catalog products "
+                "and autonomous USDC checkout remain available."
+            ) from exc
 
     if not candidates:
+        detail = (
+            "DSers pushed a product, but it was not safely readable from "
+            "Shopify with positive margin"
+            if sourcing
+            else "no matching local catalog product was available"
+        )
         raise ValueError(
-            f"no in-stock catalog product is available within "
-            f"{budget_amount:.2f} USDC"
+            f"no suitable in-stock catalog product matches {query!r} within "
+            f"{budget_amount:.2f} USDC ({detail})"
         )
 
     offer = llm.source_offer(query, budget_amount, candidates)
@@ -98,6 +154,7 @@ def source_and_price(query: str, budget_amount: float) -> dict[str, Any]:
         "price": offer["salePrice"],
         "inventoryQuantity": offer["inventoryQuantity"],
         "overBudget": False,
+        **({"externalSourcing": sourcing} if sourcing else {}),
     }
 
 

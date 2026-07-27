@@ -11,7 +11,7 @@ from typing import Any
 from urllib.parse import parse_qsl, urlencode, urlsplit, urlunsplit
 from uuid import uuid4
 
-from ..common import service_clients
+from ..common import llm, service_clients
 from ..common.config import settings
 from ..common.contracts import (
     CART_MANDATE_DATA_KEY,
@@ -241,6 +241,7 @@ def search_catalog(
     multiplier = Decimal("1") + Decimal(str(settings.markup_pct)) / Decimal("100")
     within_budget: list[dict[str, Any]] = []
     over_budget: list[dict[str, Any]] = []
+    fallback_catalog: list[dict[str, Any]] = []
     for item in catalog.products:
         product = item.model_dump()
         try:
@@ -267,9 +268,71 @@ def search_catalog(
             "currency": "USDC",
         }
         if price <= ceiling:
+            fallback_catalog.append(candidate)
+        if llm.catalog_relevance(product, query) <= 0:
+            continue
+        if price <= ceiling:
             within_budget.append(candidate)
         else:
             over_budget.append(candidate)
+
+    external_sourcing: dict[str, Any] | None = None
+    if not within_budget:
+        try:
+            external_sourcing = service_clients.shopping_source_catalog(
+                query, budget
+            )
+            metadata = external_sourcing.get("metadata", {})
+            sourced = metadata.get("product")
+            if isinstance(sourced, dict):
+                supplier_cost = sourced.get("supplierCost")
+                sourced_cost = Decimal(str(supplier_cost["amount"]))
+                catalog_price = Decimal(str(sourced["price"]))
+                sourced_price = (catalog_price * multiplier).quantize(
+                    Decimal("0.01"), rounding=ROUND_HALF_UP
+                )
+                if (
+                    int(sourced["inventoryQuantity"]) > 0
+                    and sourced_cost > 0
+                    and catalog_price > sourced_cost
+                    and sourced_price <= ceiling
+                ):
+                    public_sourced = {
+                        key: value
+                        for key, value in sourced.items()
+                        if key != "supplierCost"
+                    }
+                    within_budget = [
+                        {
+                            **public_sourced,
+                            "description": str(
+                                sourced.get("description", "")
+                            )[:600],
+                            "catalogPrice": format(catalog_price, "f"),
+                            "price": format(sourced_price, ".2f"),
+                            "currency": "USDC",
+                        }
+                    ]
+                    external_sourcing = {
+                        "status": "sourced",
+                        "provider": "dsers",
+                        "productId": sourced["productId"],
+                        "importItemId": external_sourcing.get("importItemId"),
+                    }
+        except Exception as exc:  # noqa: BLE001
+            _LOG.warning(
+                "[chat] DSers sourcing unavailable; keeping catalog fallback: %s",
+                exc,
+            )
+            external_sourcing = {
+                "status": "unavailable",
+                "provider": "dsers",
+                "message": (
+                    "New supplier sourcing is temporarily unavailable. "
+                    "The existing catalog and autonomous USDC checkout still work."
+                ),
+                "reason": "DSers authentication or supplier API unavailable",
+            }
 
     # The commerce endpoint already relevance-ranks results. Preserve that
     # ordering for in-budget matches and show the nearest over-budget items
@@ -281,6 +344,14 @@ def search_catalog(
         "currency": "USDC",
         "products": within_budget[:limit],
         "closestOverBudget": over_budget[: min(limit, 3)],
+        "fallbackCatalog": fallback_catalog[: min(limit, 3)]
+        if not within_budget
+        else [],
+        **(
+            {"externalSourcing": external_sourcing}
+            if external_sourcing
+            else {}
+        ),
     }
 
 

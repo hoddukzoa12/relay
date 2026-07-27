@@ -36,8 +36,45 @@ def _generate_json(prompt: str, fallback: dict[str, Any]) -> dict[str, Any]:
         return fallback
 
 
-def _catalog_relevance(product: dict[str, Any], query: str) -> int:
-    tokens = set(re.findall(r"[a-z0-9]+", query.lower()))
+_QUERY_STOP_WORDS = {
+    "a",
+    "an",
+    "and",
+    "below",
+    "budget",
+    "buy",
+    "dollar",
+    "dollars",
+    "find",
+    "for",
+    "less",
+    "max",
+    "me",
+    "of",
+    "please",
+    "than",
+    "the",
+    "under",
+    "up",
+    "usd",
+    "usdc",
+    "with",
+}
+
+
+def catalog_relevance(product: dict[str, Any], query: str) -> int:
+    """Return lexical evidence that a real catalog item fits the request.
+
+    A zero score is meaningful: callers use it to decide whether the supplier
+    pool should be consulted instead of pretending an unrelated earbud matches.
+    """
+    tokens = {
+        token
+        for token in re.findall(r"[a-z0-9]+", query.lower())
+        if len(token) > 1
+        and token not in _QUERY_STOP_WORDS
+        and not token.isdigit()
+    }
     title = str(product.get("title", "")).lower()
     sku = str(product.get("sku", "")).lower()
     searchable = " ".join(
@@ -48,16 +85,18 @@ def _catalog_relevance(product: dict[str, Any], query: str) -> int:
             " ".join(str(tag).lower() for tag in product.get("tags", [])),
         ]
     )
+    compact_searchable = re.sub(r"[^a-z0-9]+", "", searchable)
     return sum(
         4
         if token in title
         else 3
         if token in sku
+        else 2
+        if token in compact_searchable
         else 1
         if token in searchable
         else 0
         for token in tokens
-        if len(token) > 1
     )
 
 
@@ -73,7 +112,7 @@ def source_offer(
     deterministic = sorted(
         candidates,
         key=lambda product: (
-            -_catalog_relevance(product, query),
+            -catalog_relevance(product, query),
             float(product["price"]),
             str(product["sku"]),
         ),

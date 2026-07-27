@@ -97,7 +97,9 @@ class CatalogSourcingTest(unittest.TestCase):
             "commerce_products",
             return_value={"products": [missing]},
         ):
-            with self.assertRaisesRegex(ValueError, "no in-stock catalog product"):
+            with self.assertRaisesRegex(
+                ValueError, "no suitable in-stock catalog product"
+            ):
                 tools.source_and_price("earbuds", 5.00)
 
     def test_public_catalog_never_returns_the_private_supplier_snapshot(self) -> None:
@@ -124,8 +126,57 @@ class CatalogSourcingTest(unittest.TestCase):
                 "products": [product("OVER", "Premium Headphones", "9.00", 5)]
             },
         ):
-            with self.assertRaisesRegex(ValueError, "no in-stock catalog product"):
+            with self.assertRaisesRegex(
+                ValueError, "no suitable in-stock catalog product"
+            ):
                 tools.source_and_price("headphones", 5.00)
+
+    def test_matching_catalog_never_calls_external_sourcing(self) -> None:
+        available = product("REAL", "Wireless Earbuds Mini", "2.50", 10)
+        with (
+            patch.object(
+                tools.service_clients,
+                "commerce_products",
+                return_value={"products": [available]},
+            ),
+            patch.object(
+                tools.dsers_sourcing,
+                "source_missing_product",
+            ) as external,
+            patch.object(
+                tools.llm,
+                "source_offer",
+                side_effect=lambda _query, _budget, candidates: candidates[0],
+            ),
+        ):
+            offer = tools.source_and_price("wireless earbuds", 5.00)
+
+        self.assertEqual(offer["sku"], "REAL")
+        external.assert_not_called()
+
+    def test_unrelated_catalog_reports_dsers_failure_without_false_match(
+        self,
+    ) -> None:
+        earbuds = product("BUDS", "Wireless Earbuds", "2.00", 10)
+        with (
+            patch.object(
+                tools.service_clients,
+                "commerce_products",
+                return_value={"products": [earbuds]},
+            ),
+            patch.object(
+                tools.dsers_sourcing,
+                "source_missing_product",
+                side_effect=tools.dsers_sourcing.DSersSourcingUnavailable(
+                    "OAuth grant expired"
+                ),
+            ),
+        ):
+            with self.assertRaisesRegex(
+                ValueError,
+                "OAuth grant expired.*Existing catalog products",
+            ):
+                tools.source_and_price("smart watch", 10.00)
 
     def test_catalog_query_failure_retries_the_full_real_catalog(self) -> None:
         available = product("REAL", "Wireless Earbuds Mini", "2.50", 10)

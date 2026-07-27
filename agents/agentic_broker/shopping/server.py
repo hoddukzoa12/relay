@@ -7,6 +7,7 @@ from typing import Any
 from uuid import uuid4
 
 from fastapi import FastAPI, Header, HTTPException
+from pydantic import BaseModel, Field
 
 from ..common import service_clients
 from ..common.agent_cards import shopping_agent_card
@@ -30,6 +31,10 @@ from ..common.contracts import (
 from ..common.mandates import verify_wallet_signature
 from . import broker
 from . import tools
+from .dsers_sourcing import (
+    DSersSourcingUnavailable,
+    source_missing_product,
+)
 
 app = FastAPI(title="Shopping Broker Agent", version="0.1.0")
 _LOG = logging.getLogger(__name__)
@@ -53,6 +58,24 @@ def health() -> dict[str, object]:
 @app.get("/a2a/agent-card")
 def agent_card() -> dict[str, object]:
     return shopping_agent_card()
+
+
+class CatalogSourceRequest(BaseModel):
+    query: str = Field(min_length=1, max_length=200)
+    budget: float = Field(gt=0)
+
+
+@app.post("/catalog/source")
+def source_catalog(request: CatalogSourceRequest) -> dict[str, Any]:
+    """Add one missing product through DSers without coupling payment to it."""
+    try:
+        return source_missing_product(request.query, request.budget)
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+    except DSersSourcingUnavailable as exc:
+        # 503 is explicit and recoverable. Buyer chat catches it and continues
+        # showing the unchanged Shopify catalog.
+        raise HTTPException(status_code=503, detail=str(exc)) from exc
 
 
 def _message_data(message: dict[str, Any]) -> dict[str, Any]:

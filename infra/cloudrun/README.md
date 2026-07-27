@@ -37,6 +37,12 @@ Prerequisites:
 - `wallets/merchant.json` and `wallets/buyer.json` present locally;
 - Node 20+, pnpm, and Python 3.11+.
 
+Optional autonomous DSers sourcing additionally requires the one-time,
+human-present bootstrap in
+[`../../docs/DSERS-SOURCING.md`](../../docs/DSERS-SOURCING.md). The resulting
+rotating OAuth grant lives in `DSERS_SECRET_ID`; it is not mounted or passed as
+an environment variable.
+
 Deployment changes cloud state and must not run without explicit approval.
 After approval, run:
 
@@ -91,6 +97,7 @@ active versions, within Secret Manager's account-wide free allowance:
 | `relay-shopify-client-secret` | `SHOPIFY_CLIENT_SECRET` | commerce |
 | `relay-clerk-secret-key` | `CLERK_SECRET_KEY` | buyer, mcp |
 | `relay-mcp-api-key` | `MCP_API_KEY` | mcp |
+| `relay-dsers-oauth` (optional) | Secret Manager API + active alias | shopping |
 
 `relay-wallets` is JSON with `MERCHANT_WALLET_SECRET` and
 `BUYER_WALLET_SECRET`, both base58-encoded 64-byte Solana keypairs. Bundling the
@@ -98,6 +105,11 @@ two wallet values keeps the deployment within the free allowance; payments
 loads the same two runtime names through `WALLET_SECRET_BUNDLE_PATH`. The local
 wallet JSON files and `.env` are excluded by both `.gitignore` and
 `.gcloudignore`.
+
+Because DSers rotates its refresh token on every use, `relay-shopping` receives
+`roles/secretmanager.admin` on the DSers secret only. It uses an ETag-protected
+annotation lease and promotes each rotated grant as a new version. No
+project-wide Secret Manager role is needed.
 
 ## Verify
 
