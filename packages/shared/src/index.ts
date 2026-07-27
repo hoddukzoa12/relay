@@ -87,6 +87,86 @@ export const WalletOrdersResponseSchema = z.object({
 export type WalletOrdersResponse = z.infer<typeof WalletOrdersResponseSchema>;
 
 // ---------------------------------------------------------------------------
+// Post-purchase order lifecycle — lookup, fulfillment, tracking, and refund.
+// Keep these schemas mirrored in common/contracts.py and packages/shared/schemas.
+// ---------------------------------------------------------------------------
+export const OrderLineItemSchema = z.object({
+  title: z.string(),
+  sku: z.string(),
+  quantity: z.number().int().positive(),
+});
+export type OrderLineItem = z.infer<typeof OrderLineItemSchema>;
+
+export const OnChainProofSchema = z.object({
+  txSignature: z.string().min(1),
+  explorer: z.string().url(),
+});
+export type OnChainProof = z.infer<typeof OnChainProofSchema>;
+
+export const PaymentProofSchema = OnChainProofSchema.extend({
+  reference: z.string().min(1).nullable(),
+});
+export type PaymentProof = z.infer<typeof PaymentProofSchema>;
+
+export const RefundStateSchema = z.object({
+  status: z.enum(["not_refunded", "refunded"]),
+  reference: z.string().min(1).nullable(),
+  txSignature: z.string().min(1).nullable(),
+  explorer: z.string().url().nullable(),
+});
+export type RefundState = z.infer<typeof RefundStateSchema>;
+
+export const TrackingInfoSchema = z.object({
+  provider: z.literal("easypost"),
+  carrier: z.string().min(1),
+  trackingNumber: z.string().min(1),
+  status: z.string().min(1),
+  statusDetail: z.string().nullable(),
+  trackingUrl: z.string().url().nullable(),
+  estimatedDeliveryAt: z.string().nullable(),
+  demo: z.boolean(),
+  message: z.string().min(1),
+});
+export type TrackingInfo = z.infer<typeof TrackingInfoSchema>;
+
+export const OrderStatusSchema = z.object({
+  shopifyOrderId: z.string(),
+  orderRef: z.string(),
+  name: z.string(),
+  financialStatus: z.string(),
+  fulfillmentStatus: z.string(),
+  lineItems: z.array(OrderLineItemSchema).min(1),
+  amount: MoneySchema,
+  payment: PaymentProofSchema,
+  refund: RefundStateSchema,
+  tracking: TrackingInfoSchema.nullable(),
+});
+export type OrderStatus = z.infer<typeof OrderStatusSchema>;
+
+export const RefundResultSchema = z.object({
+  shopifyOrderId: z.string(),
+  orderRef: z.string(),
+  name: z.string(),
+  status: z.literal("refunded"),
+  financialStatus: z.literal("REFUNDED"),
+  amount: MoneySchema,
+  payment: PaymentProofSchema,
+  refund: PaymentProofSchema,
+  replayed: z.boolean(),
+});
+export type RefundResult = z.infer<typeof RefundResultSchema>;
+
+export const FulfillmentResultSchema = z.object({
+  shopifyOrderId: z.string(),
+  orderRef: z.string(),
+  name: z.string(),
+  fulfillmentStatus: z.literal("FULFILLED"),
+  tracking: TrackingInfoSchema,
+  replayed: z.boolean(),
+});
+export type FulfillmentResult = z.infer<typeof FulfillmentResultSchema>;
+
+// ---------------------------------------------------------------------------
 // AP2 mandates — carried as A2A DataParts alongside the existing REST contracts.
 // Field names follow google-agentic-commerce/AP2's v0.1 mandate types. Relay's
 // price/shipping/binding fields make the autonomous Solana Pay authorization

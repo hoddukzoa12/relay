@@ -6,7 +6,9 @@ A buyer agent delegates a purchase; a **shopping (broker) agent** sources the
 product, sets a resale price, and issues an **agent-native payment request**; the
 buyer's wallet **signs it autonomously — no human click** — and settles in
 **on-chain USDC on Solana devnet**. The broker verifies the payment on-chain by
-`reference`, then records a paid order in Shopify.
+`reference`, then records a paid order in Shopify. After purchase, the same
+agent can look up, fulfill, track, and fully refund the order; refunds move USDC
+back **merchant → buyer** on-chain.
 
 **Why on-chain?** Two agents that don't trust each other, with no bank account,
 no card, and no human in the loop, settle instantly and verifiably. That's the
@@ -193,6 +195,31 @@ The critical invariant: the buyer is handed **an agent-native payment request,
 never a Shopify web-checkout link** — so the wallet can sign without a human
 click. That's what makes it *autonomous* (PRD §7).
 
+## Post-purchase lifecycle
+
+Relay exposes the complete agent-owned lifecycle:
+
+```text
+payment → lookup → fulfillment → tracking → full refund
+```
+
+- `GET /orders/{orderRef-or-name}` on the shopping agent returns financial and
+  fulfillment state, real SKU line items, the paid amount, and payment/refund
+  explorer proof. `shopping/tools.py:get_order_status` is the reusable primitive
+  for the MCP `get_order_status` tool in #17.
+- `POST /orders/{orderRef}/fulfill` creates Shopify fulfillment records from
+  `fulfillmentOrders` and attaches a carrier + tracking number.
+- `GET /orders/{orderRef-or-name}/tracking` uses a replaceable official EasyPost
+  Tracker API adapter when `EASYPOST_API_KEY` is configured.
+- `POST /orders/{orderRef-or-name}/refund` first re-verifies the original Solana
+  Pay transfer, then returns the full USDC amount from merchant to buyer and
+  records the refund proof in Shopify.
+
+The included tracking number (`EZ2000000002`) is an EasyPost test value.
+**It is demo data, not a real parcel or shipping claim.** See
+[`docs/ORDER-LIFECYCLE.md`](docs/ORDER-LIFECYCLE.md) for endpoint details,
+idempotency boundaries, and the real devnet evidence.
+
 ## Deploy (Cloud Run)
 
 Live deployment (`web3research`, `us-central1`):
@@ -267,9 +294,10 @@ under three minutes.
 
 - Wallet keys and API tokens live only in `.env` / Secret Manager — never
   committed (`.gitignore` enforces this).
-- Payment and fulfillment idempotency state is process-local (in-memory); a
-  restart forgets paid references and settled/pending-fulfillment orders. This
-  is acceptable for the devnet demo only; use Firestore/Redis before production.
+- Payment, refund, and fulfillment compare-and-set state is process-local
+  (in-memory); a restart forgets payment-service request state. Shopify custom
+  attributes preserve completed ledger proofs, but Firestore/Redis is required
+  before production.
 - Devnet only. Do not point this at mainnet without an escrow/settlement review.
 
 ## License

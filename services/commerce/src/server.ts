@@ -3,7 +3,16 @@ import cors from "cors";
 import { z } from "zod";
 import { config } from "./config.js";
 import { listProducts } from "./catalog.js";
-import { createPaidOrder, listOrdersByWallet } from "./shopify.js";
+import {
+  OrderLifecycleConflictError,
+  OrderNotFoundError,
+  createPaidOrder,
+  fulfillOrder,
+  getOrderStatus,
+  listOrdersByWallet,
+  markOrderRefunded,
+  trackOrder,
+} from "./shopify.js";
 
 const app = express();
 app.use(cors());
@@ -40,6 +49,7 @@ const OrderSchema = z.object({
   amount: z.string(),
   buyerAddress: z.string(),
   shipTo: z.string(),
+  paymentReference: z.string().optional(),
   txSignature: z.string(),
   explorer: z.string(),
 });
@@ -64,9 +74,57 @@ app.get(
   }),
 );
 
+app.get(
+  "/orders/:identifier",
+  asyncH(async (req, res) => {
+    res.json(await getOrderStatus(req.params.identifier!));
+  }),
+);
+
+const RefundOrderSchema = z.object({
+  refundReference: z.string().min(1),
+  refundTxSignature: z.string().min(1),
+  refundExplorer: z.string().url(),
+});
+app.post(
+  "/orders/:orderRef/refund",
+  asyncH(async (req, res) => {
+    const input = RefundOrderSchema.parse(req.body);
+    res.json(
+      await markOrderRefunded(
+        req.params.orderRef!,
+        input.refundReference,
+        input.refundTxSignature,
+        input.refundExplorer,
+      ),
+    );
+  }),
+);
+
+app.post(
+  "/orders/:orderRef/fulfill",
+  asyncH(async (req, res) => {
+    res.json(await fulfillOrder(req.params.orderRef!));
+  }),
+);
+
+app.get(
+  "/orders/:identifier/tracking",
+  asyncH(async (req, res) => {
+    res.json(await trackOrder(req.params.identifier!));
+  }),
+);
+
 app.use((err: unknown, _req: Request, res: Response, _next: NextFunction) => {
   const message = err instanceof Error ? err.message : String(err);
-  const status = err instanceof z.ZodError ? 400 : 500;
+  const status =
+    err instanceof z.ZodError
+      ? 400
+      : err instanceof OrderNotFoundError
+        ? 404
+        : err instanceof OrderLifecycleConflictError
+          ? 409
+          : 500;
   console.error("[commerce] error:", message);
   res.status(status).json({ error: message });
 });

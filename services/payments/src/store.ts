@@ -18,6 +18,10 @@ export interface StoredRequest {
   status: "pending" | "paying" | "paid";
   submittedTxSignature: string | null;
   paidTxSignature: string | null;
+  refundReference: string;
+  refundStatus: "not_refunded" | "refunding" | "refunded";
+  refundSubmittedTxSignature: string | null;
+  refundTxSignature: string | null;
 }
 
 const requests = new Map<string, StoredRequest>();
@@ -79,6 +83,64 @@ export const store = {
       request.submittedTxSignature === null
     ) {
       request.status = "pending";
+    }
+  },
+  /**
+   * A second process-local compare-and-set boundary protects the reverse money
+   * movement. A paid reference can enter refunding exactly once.
+   */
+  beginRefund(reference: string):
+    | { state: "started"; request: StoredRequest }
+    | { state: "refunding"; request: StoredRequest }
+    | { state: "refunded"; request: StoredRequest } {
+    const request = requests.get(reference);
+    if (!request) {
+      throw new Error("Unknown payment reference");
+    }
+    if (request.status !== "paid" || request.paidTxSignature === null) {
+      throw new Error(`Order ${request.orderRef} has no verified paid transaction`);
+    }
+    if (request.refundStatus === "not_refunded") {
+      request.refundStatus = "refunding";
+      return { state: "started", request };
+    }
+    return { state: request.refundStatus, request };
+  },
+  recordRefundSubmitted(reference: string, signature: string): void {
+    const request = requests.get(reference);
+    if (!request || request.refundStatus !== "refunding") {
+      throw new Error(`Cannot record submitted refund for ${reference}`);
+    }
+    if (
+      request.refundSubmittedTxSignature !== null &&
+      request.refundSubmittedTxSignature !== signature
+    ) {
+      throw new Error(`Payment reference ${reference} already has a submitted refund`);
+    }
+    request.refundSubmittedTxSignature = signature;
+  },
+  markRefunded(reference: string, signature: string): void {
+    const request = requests.get(reference);
+    if (!request) {
+      throw new Error("Unknown payment reference");
+    }
+    if (
+      request.refundTxSignature !== null &&
+      request.refundTxSignature !== signature
+    ) {
+      throw new Error(`Order ${request.orderRef} is already refunded by another transaction`);
+    }
+    request.refundStatus = "refunded";
+    request.refundSubmittedTxSignature ??= signature;
+    request.refundTxSignature = signature;
+  },
+  resetUnsubmittedRefund(reference: string): void {
+    const request = requests.get(reference);
+    if (
+      request?.refundStatus === "refunding" &&
+      request.refundSubmittedTxSignature === null
+    ) {
+      request.refundStatus = "not_refunded";
     }
   },
   all(): StoredRequest[] {

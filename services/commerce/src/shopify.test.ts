@@ -11,19 +11,29 @@ import {
 } from "./shopify-client.js";
 import {
   createPaidOrder,
+  fulfillOrder,
+  getOrderStatus,
   isTemporaryOrderMutationError,
   listOrdersByWallet,
+  markOrderRefunded,
   orderTag,
   type OrderInput,
 } from "./shopify.js";
+import {
+  DEMO_TRACKING_NUMBER,
+  EasyPostTrackingProvider,
+  demoTrackingInfo,
+} from "./tracking.js";
 
 const input = (orderRef: string): OrderInput => ({
   orderRef,
   productId: "product",
   title: "Idempotency test",
+  sku: "RELAY-IDEMPOTENCY",
   amount: "1.00",
   buyerAddress: "buyer",
   shipTo: "destination",
+  paymentReference: `reference-${orderRef}`,
   txSignature: "signature",
   explorer: "https://explorer.test/signature",
 });
@@ -64,6 +74,86 @@ test("wallet order lookup returns only the signed-in wallet's orders", async () 
   assert.equal(orders.length, 1);
   assert.equal(orders[0]?.orderRef, ownOrder.orderRef);
   assert.equal(orders[0]?.buyerWallet, wallet);
+});
+
+test("mock order lifecycle supports lookup, idempotent fulfillment, and refund", async () => {
+  const order = input(`order-${crypto.randomUUID()}`);
+  const created = await createPaidOrder(order);
+
+  const byRef = await getOrderStatus(order.orderRef);
+  const byName = await getOrderStatus(created.name);
+  assert.deepEqual(byName, byRef);
+  assert.equal(byRef.financialStatus, "PAID");
+  assert.equal(byRef.fulfillmentStatus, "UNFULFILLED");
+  assert.equal(byRef.lineItems[0]?.sku, "RELAY-IDEMPOTENCY");
+  assert.equal(byRef.payment.reference, order.paymentReference);
+  assert.equal(byRef.refund.status, "not_refunded");
+
+  const fulfilled = await fulfillOrder(order.orderRef);
+  const fulfillmentReplay = await fulfillOrder(order.orderRef);
+  assert.equal(fulfilled.fulfillmentStatus, "FULFILLED");
+  assert.equal(fulfilled.tracking.trackingNumber, DEMO_TRACKING_NUMBER);
+  assert.equal(fulfilled.tracking.demo, true);
+  assert.equal(fulfilled.replayed, false);
+  assert.equal(fulfillmentReplay.replayed, true);
+
+  const refunded = await markOrderRefunded(
+    order.orderRef,
+    "refund-reference",
+    "refund-signature",
+    "https://explorer.test/refund-signature",
+  );
+  const refundReplay = await markOrderRefunded(
+    order.orderRef,
+    "refund-reference",
+    "refund-signature",
+    "https://explorer.test/refund-signature",
+  );
+  assert.equal(refunded.financialStatus, "REFUNDED");
+  assert.equal(refunded.refund.status, "refunded");
+  assert.deepEqual(refundReplay, refunded);
+  await assert.rejects(
+    markOrderRefunded(
+      order.orderRef,
+      "different-refund-reference",
+      "different-refund-signature",
+      "https://explorer.test/different-refund-signature",
+    ),
+    /already refunded by refund-signature/,
+  );
+});
+
+test("demo tracking metadata never claims a real shipment", () => {
+  const tracking = demoTrackingInfo();
+  assert.equal(tracking.demo, true);
+  assert.match(tracking.message, /DEMO.*not.*real parcel/i);
+});
+
+test("EasyPost provider uses the official tracker endpoint", async () => {
+  let requestedUrl = "";
+  let requestedBody = "";
+  const fetchImpl = (async (url, init) => {
+    requestedUrl = String(url);
+    requestedBody = String(init?.body ?? "");
+    return Response.json({
+      tracking_code: DEMO_TRACKING_NUMBER,
+      carrier: "USPS",
+      status: "in_transit",
+      status_detail: "in_transit",
+      public_url: "https://track.easypost.test/demo",
+      est_delivery_date: null,
+    });
+  }) as typeof fetch;
+
+  const result = await new EasyPostTrackingProvider(
+    "test-key",
+    fetchImpl,
+  ).lookup(DEMO_TRACKING_NUMBER, "USPS");
+
+  assert.equal(requestedUrl, "https://api.easypost.com/v2/trackers");
+  assert.match(requestedBody, new RegExp(DEMO_TRACKING_NUMBER));
+  assert.equal(result.status, "in_transit");
+  assert.equal(result.demo, true);
 });
 
 test("mock catalog is deterministic and query-ranked", async () => {

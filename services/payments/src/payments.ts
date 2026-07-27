@@ -48,6 +48,9 @@ export interface PayResult {
 
 type ReconciliationResult = "failed" | "paid" | "pending";
 const inFlightPayments = new Map<string, Promise<PayResult>>();
+const inFlightRefunds = new Map<string, Promise<RefundTransferResult>>();
+
+export class RefundRefusedError extends Error {}
 
 function paidResult(signature: string): PayResult {
   return {
@@ -157,6 +160,10 @@ export function createPaymentRequest(input: CreateRequestInput): PaymentRequest 
     status: "pending",
     submittedTxSignature: null,
     paidTxSignature: null,
+    refundReference: Keypair.generate().publicKey.toBase58(),
+    refundStatus: "not_refunded",
+    refundSubmittedTxSignature: null,
+    refundTxSignature: null,
   };
   store.put(stored);
 
@@ -348,6 +355,334 @@ export async function pay(input: PayInput): Promise<PayResult> {
   } finally {
     if (inFlightPayments.get(input.reference) === operation) {
       inFlightPayments.delete(input.reference);
+    }
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Post-purchase refund — the merchant wallet returns the original full USDC
+// amount to the configured buyer wallet. The original Solana Pay transfer is
+// re-verified on-chain before the refund CAS can be acquired.
+// ---------------------------------------------------------------------------
+export interface RefundInput {
+  orderRef: string;
+  reference: string;
+}
+
+export interface RefundTransferResult {
+  orderRef: string;
+  status: "pending" | "refunded";
+  amount: string;
+  recipient: string;
+  paymentTxSignature: string;
+  paymentExplorer: string;
+  refundReference: string;
+  refundTxSignature: string;
+  refundExplorer: string;
+  reason: "broadcast_uncertain" | "confirmation_uncertain" | null;
+  replayed: boolean;
+}
+
+type RefundReconciliationResult = "failed" | "refunded" | "pending";
+
+function refundTransferResult(
+  stored: StoredRequest,
+  signature: string,
+  status: RefundTransferResult["status"],
+  reason: RefundTransferResult["reason"],
+  replayed: boolean,
+): RefundTransferResult {
+  if (!stored.paidTxSignature) {
+    throw new Error(`Paid order ${stored.orderRef} has no stored payment signature`);
+  }
+  return {
+    orderRef: stored.orderRef,
+    status,
+    amount: stored.amount,
+    recipient: buyer.publicKey.toBase58(),
+    paymentTxSignature: stored.paidTxSignature,
+    paymentExplorer: explorerTxUrl(stored.paidTxSignature, CLUSTER),
+    refundReference: stored.refundReference,
+    refundTxSignature: signature,
+    refundExplorer: explorerTxUrl(signature, CLUSTER),
+    reason,
+    replayed,
+  };
+}
+
+async function reconcileSubmittedRefund(
+  stored: StoredRequest,
+  signature: string,
+): Promise<RefundReconciliationResult> {
+  const refundReference = new PublicKey(stored.refundReference);
+  const [statusResult, referenceResult] = await Promise.allSettled([
+    withFailover((c) =>
+      c.getSignatureStatuses([signature], { searchTransactionHistory: true }),
+    ),
+    withFailover(
+      (c) => findReference(c, refundReference, { finality: "confirmed" }),
+      (err) => !(err instanceof FindReferenceError),
+    ).catch((err: unknown) => {
+      if (err instanceof FindReferenceError) return null;
+      throw err;
+    }),
+  ]);
+
+  const signatureStatus =
+    statusResult.status === "fulfilled" ? statusResult.value.value[0] : null;
+  const referenceInfo =
+    referenceResult.status === "fulfilled" ? referenceResult.value : null;
+  if (
+    signatureStatus?.err ||
+    (referenceInfo?.signature === signature && referenceInfo.err)
+  ) {
+    return "failed";
+  }
+  if (
+    signatureStatus?.confirmationStatus !== "confirmed" &&
+    signatureStatus?.confirmationStatus !== "finalized" &&
+    referenceInfo?.signature !== signature
+  ) {
+    return "pending";
+  }
+
+  try {
+    await withFailover((c) =>
+      validateTransfer(
+        c,
+        signature,
+        {
+          recipient: buyer.publicKey,
+          amount: new BigNumber(stored.amount),
+          splToken: usdcMint,
+          reference: refundReference,
+        },
+        { commitment: "confirmed" },
+      ),
+    );
+  } catch (err) {
+    if (err instanceof ValidateTransferError && err.message === "not found") {
+      return "pending";
+    }
+    console.error(
+      `[refund] submitted transaction ${signature} failed validation:`,
+      err instanceof Error ? err.message : String(err),
+    );
+    return "failed";
+  }
+
+  store.markRefunded(stored.reference, signature);
+  return "refunded";
+}
+
+async function submitRefund(stored: StoredRequest): Promise<RefundTransferResult> {
+  let tx: Transaction;
+  let latestBlockhash: Awaited<ReturnType<typeof connection.getLatestBlockhash>>;
+  try {
+    await assertUsdcDecimals();
+
+    const merchantAta = await ensureAta(merchant, merchant.publicKey);
+    const buyerAta = await ensureAta(merchant, buyer.publicKey);
+    const ix = createTransferCheckedInstruction(
+      merchantAta.address,
+      usdcMint,
+      buyerAta.address,
+      merchant.publicKey,
+      toBaseUnits(stored.amount),
+      usdcDecimals,
+    );
+    ix.keys.push({
+      pubkey: new PublicKey(stored.refundReference),
+      isSigner: false,
+      isWritable: false,
+    });
+
+    tx = new Transaction().add(ix);
+    tx.feePayer = merchant.publicKey;
+    latestBlockhash = await connection.getLatestBlockhash("confirmed");
+    tx.recentBlockhash = latestBlockhash.blockhash;
+    tx.sign(merchant);
+  } catch (err) {
+    store.resetUnsubmittedRefund(stored.reference);
+    throw err;
+  }
+
+  if (!tx.signature) {
+    store.resetUnsubmittedRefund(stored.reference);
+    throw new Error("Signed refund transaction did not contain a signature");
+  }
+  const signature = bs58.encode(tx.signature);
+  store.recordRefundSubmitted(stored.reference, signature);
+
+  try {
+    const submittedSignature = await connection.sendRawTransaction(tx.serialize(), {
+      preflightCommitment: "confirmed",
+      maxRetries: 5,
+    });
+    if (submittedSignature !== signature) {
+      console.warn(
+        `[refund] RPC returned signature ${submittedSignature}, expected ${signature}`,
+      );
+    }
+  } catch (err) {
+    const reconciled = await reconcileSubmittedRefund(stored, signature);
+    if (reconciled === "refunded") {
+      return refundTransferResult(stored, signature, "refunded", null, false);
+    }
+    if (reconciled === "failed") {
+      throw new Error(
+        `USDC refund ${signature} failed; manual review is required before retrying`,
+      );
+    }
+    console.warn(
+      `[refund] broadcast result is uncertain for ${signature}; refund remains locked:`,
+      String(err),
+    );
+    return refundTransferResult(
+      stored,
+      signature,
+      "pending",
+      "broadcast_uncertain",
+      false,
+    );
+  }
+
+  let confirmation;
+  try {
+    confirmation = await connection.confirmTransaction(
+      { signature, ...latestBlockhash },
+      "confirmed",
+    );
+  } catch (err) {
+    const reconciled = await reconcileSubmittedRefund(stored, signature);
+    if (reconciled === "refunded") {
+      return refundTransferResult(stored, signature, "refunded", null, false);
+    }
+    if (reconciled === "failed") {
+      throw new Error(
+        `USDC refund ${signature} failed; manual review is required before retrying`,
+      );
+    }
+    console.warn(
+      `[refund] confirmation is uncertain for ${signature}; refund remains locked:`,
+      String(err),
+    );
+    return refundTransferResult(
+      stored,
+      signature,
+      "pending",
+      "confirmation_uncertain",
+      false,
+    );
+  }
+  if (confirmation.value.err) {
+    throw new Error(
+      `USDC refund ${signature} failed: ${JSON.stringify(confirmation.value.err)}; ` +
+        "manual review is required before retrying",
+    );
+  }
+
+  store.markRefunded(stored.reference, signature);
+  console.log(
+    `[refund] returned ${stored.amount} USDC merchant→buyer for ${stored.orderRef} tx=${signature}`,
+  );
+  return refundTransferResult(stored, signature, "refunded", null, false);
+}
+
+export async function refund(input: RefundInput): Promise<RefundTransferResult> {
+  const stored = store.get(input.reference);
+  if (!stored || stored.orderRef !== input.orderRef) {
+    throw new RefundRefusedError(
+      `No issued payment matches order ${input.orderRef} and reference ${input.reference}`,
+    );
+  }
+  if (stored.recipient !== merchant.publicKey.toBase58()) {
+    throw new RefundRefusedError(
+      `Order ${input.orderRef} was not paid to the configured merchant wallet`,
+    );
+  }
+
+  // Never trust process-local paid state alone for the reverse money movement.
+  const originalPayment = await verify(input.reference);
+  if (
+    originalPayment.status !== "paid" ||
+    !originalPayment.txSignature ||
+    !originalPayment.explorer
+  ) {
+    throw new RefundRefusedError(
+      `Order ${input.orderRef} cannot be refunded because its original payment ` +
+        `is not verified on-chain (status=${originalPayment.status}, ` +
+        `reason=${originalPayment.reason ?? "unknown"})`,
+    );
+  }
+
+  if (stored.refundStatus === "refunded") {
+    if (!stored.refundTxSignature) {
+      throw new Error(`Refunded order ${input.orderRef} has no stored refund signature`);
+    }
+    return refundTransferResult(
+      stored,
+      stored.refundTxSignature,
+      "refunded",
+      null,
+      true,
+    );
+  }
+
+  const transition = store.beginRefund(input.reference);
+  if (transition.state === "refunded") {
+    if (!transition.request.refundTxSignature) {
+      throw new Error(`Refunded order ${input.orderRef} has no stored refund signature`);
+    }
+    return refundTransferResult(
+      transition.request,
+      transition.request.refundTxSignature,
+      "refunded",
+      null,
+      true,
+    );
+  }
+  if (transition.state === "refunding") {
+    const inFlight = inFlightRefunds.get(input.reference);
+    if (inFlight) {
+      const result = await inFlight;
+      return { ...result, replayed: true };
+    }
+    const submitted = transition.request.refundSubmittedTxSignature;
+    if (!submitted) {
+      throw new Error(`Refund for order ${input.orderRef} is already being prepared`);
+    }
+    const reconciled = await reconcileSubmittedRefund(transition.request, submitted);
+    if (reconciled === "refunded") {
+      return refundTransferResult(
+        transition.request,
+        submitted,
+        "refunded",
+        null,
+        true,
+      );
+    }
+    if (reconciled === "failed") {
+      throw new Error(
+        `USDC refund ${submitted} failed; manual review is required before retrying`,
+      );
+    }
+    return refundTransferResult(
+      transition.request,
+      submitted,
+      "pending",
+      "confirmation_uncertain",
+      true,
+    );
+  }
+
+  const operation = submitRefund(transition.request);
+  inFlightRefunds.set(input.reference, operation);
+  try {
+    return await operation;
+  } finally {
+    if (inFlightRefunds.get(input.reference) === operation) {
+      inFlightRefunds.delete(input.reference);
     }
   }
 }

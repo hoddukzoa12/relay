@@ -72,6 +72,74 @@ class WalletOrdersResponse(BaseModel):
     orders: list[WalletOrder]
 
 
+class OrderLineItem(BaseModel):
+    title: str
+    sku: str
+    quantity: int = Field(gt=0)
+
+
+class OnChainProof(BaseModel):
+    txSignature: str = Field(min_length=1)
+    explorer: str
+
+
+class PaymentProof(OnChainProof):
+    reference: Optional[str] = Field(default=None, min_length=1)
+
+
+class RefundState(BaseModel):
+    status: Literal["not_refunded", "refunded"]
+    reference: Optional[str] = None
+    txSignature: Optional[str] = None
+    explorer: Optional[str] = None
+
+
+class TrackingInfo(BaseModel):
+    provider: Literal["easypost"]
+    carrier: str = Field(min_length=1)
+    trackingNumber: str = Field(min_length=1)
+    status: str = Field(min_length=1)
+    statusDetail: Optional[str] = None
+    trackingUrl: Optional[str] = None
+    estimatedDeliveryAt: Optional[str] = None
+    demo: bool
+    message: str = Field(min_length=1)
+
+
+class OrderStatus(BaseModel):
+    shopifyOrderId: str
+    orderRef: str
+    name: str
+    financialStatus: str
+    fulfillmentStatus: str
+    lineItems: list[OrderLineItem] = Field(min_length=1)
+    amount: Money
+    payment: PaymentProof
+    refund: RefundState
+    tracking: Optional[TrackingInfo] = None
+
+
+class RefundResult(BaseModel):
+    shopifyOrderId: str
+    orderRef: str
+    name: str
+    status: Literal["refunded"]
+    financialStatus: Literal["REFUNDED"]
+    amount: Money
+    payment: PaymentProof
+    refund: PaymentProof
+    replayed: bool
+
+
+class FulfillmentResult(BaseModel):
+    shopifyOrderId: str
+    orderRef: str
+    name: str
+    fulfillmentStatus: Literal["FULFILLED"]
+    tracking: TrackingInfo
+    replayed: bool
+
+
 class PaymentRequest(BaseModel):
     """Step 3 — shopping -> buyer. The agent-native payment request."""
 

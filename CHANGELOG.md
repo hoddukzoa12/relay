@@ -15,6 +15,10 @@ Format: [Keep a Changelog](https://keepachangelog.com/); versioning is SemVer-is
 - Added Clerk Sign in with Solana to the buyer console and Shopify widget,
   cached-JWKS session verification, one-signature human AP2 delegation, and
   signed-in-wallet Shopify order lookup (#29).
+- Added the agent-owned post-purchase lifecycle: single-order status lookup,
+  idempotent Shopify fulfillment with explicit demo tracking, and a full
+  merchant-to-buyer on-chain USDC refund with bidirectional explorer proof
+  (#26).
 
 ### Changed
 - Grounded sourcing in in-stock, within-budget Shopify variants, carried the

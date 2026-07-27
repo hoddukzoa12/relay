@@ -4,7 +4,13 @@ import { PublicKey } from "@solana/web3.js";
 import { z } from "zod";
 import { config } from "./config.js";
 import { buyer, merchant, usdcMint } from "./solana.js";
-import { createPaymentRequest, pay, verify } from "./payments.js";
+import {
+  RefundRefusedError,
+  createPaymentRequest,
+  pay,
+  refund,
+  verify,
+} from "./payments.js";
 import { signMandate, verifyMandate } from "./mandates.js";
 
 const app = express();
@@ -121,10 +127,27 @@ app.post(
   }),
 );
 
+const RefundSchema = z.object({
+  orderRef: z.string().min(1),
+  reference: z.string().min(1),
+});
+app.post(
+  "/refunds",
+  asyncH(async (req, res) => {
+    const input = RefundSchema.parse(req.body);
+    res.json(await refund(input));
+  }),
+);
+
 // Central error handler.
 app.use((err: unknown, _req: Request, res: Response, _next: NextFunction) => {
   const message = err instanceof Error ? err.message : String(err);
-  const status = err instanceof z.ZodError ? 400 : 500;
+  const status =
+    err instanceof z.ZodError
+      ? 400
+      : err instanceof RefundRefusedError
+        ? 409
+        : 500;
   console.error("[payments] error:", message);
   res.status(status).json({ error: message });
 });
