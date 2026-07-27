@@ -22,6 +22,9 @@ Format: [Keep a Changelog](https://keepachangelog.com/); versioning is SemVer-is
   idempotent Shopify fulfillment with explicit demo tracking, and a full
   merchant-to-buyer on-chain USDC refund with bidirectional explorer proof
   (#26).
+- Added the Shopify landing-page chat storefront with live catalog cards,
+  client-side multi-turn state, autonomous `/buy` settlement progress, and
+  inline Solana explorer plus Shopify order proof (#39, Phase 1).
 
 ### Changed
 - Grounded sourcing in in-stock, within-budget Shopify variants, carried the

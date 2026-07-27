@@ -1,0 +1,1128 @@
+<section class="relay-agent-chat-section">
+  <relay-agent-chat
+    agent-base-url="{{ section.settings.agent_base_url | escape }}"
+    ship-to="{{ section.settings.ship_to | escape }}"
+    heading="{{ section.settings.heading | escape }}"
+    intro="{{ section.settings.intro | escape }}"
+    currency="{{ cart.currency.iso_code | default: shop.currency | escape }}"
+  >
+    <script type="application/json" data-relay-catalog>
+      [
+        {%- for product in collections.all.products limit: 50 -%}
+          {
+            "id": {{ product.id | json }},
+            "handle": {{ product.handle | json }},
+            "title": {{ product.title | json }},
+            "url": {{ product.url | json }},
+            "image": {% if product.featured_image %}{{ product.featured_image | image_url: width: 900 | json }}{% else %}null{% endif %},
+            "priceCents": {{ product.price | json }},
+            "available": {{ product.available | json }},
+            "description": {{ product.description | strip_html | truncate: 180 | json }},
+            "tags": {{ product.tags | join: ' ' | json }},
+            "vendor": {{ product.vendor | json }},
+            "sku": {{ product.selected_or_first_available_variant.sku | json }}
+          }{% unless forloop.last %},{% endunless %}
+        {%- endfor -%}
+      ]
+    </script>
+  </relay-agent-chat>
+</section>
+
+{% raw %}
+<script>
+(() => {
+  if (customElements.get("relay-agent-chat")) return;
+
+  const view = document.createElement("template");
+  view.innerHTML = `
+    <style>
+      :host {
+        --relay-bg: #f5f4ef;
+        --relay-paper: #fbfaf6;
+        --relay-ink: #11110f;
+        --relay-muted: #67675f;
+        --relay-rule: #d5d4cc;
+        --relay-soft: #e9e8e1;
+        --relay-accent: #3157c8;
+        display: block;
+        min-height: min(900px, calc(100vh - 70px));
+        color: var(--relay-ink);
+        background: var(--relay-bg);
+        font: 400 15px/1.45 Inter, "Helvetica Neue", Helvetica, Arial, system-ui, sans-serif;
+        font-synthesis: none;
+      }
+
+      * { box-sizing: border-box; }
+      button, input { font: inherit; }
+      button, a { -webkit-tap-highlight-color: transparent; }
+      button:focus-visible, input:focus-visible, a:focus-visible {
+        outline: 2px solid var(--relay-accent);
+        outline-offset: 3px;
+      }
+
+      .shell {
+        display: grid;
+        grid-template-columns: minmax(250px, .72fr) minmax(0, 1.55fr);
+        min-height: min(900px, calc(100vh - 70px));
+        border-top: 1px solid var(--relay-rule);
+        border-bottom: 1px solid var(--relay-rule);
+      }
+
+      .editorial {
+        display: flex;
+        flex-direction: column;
+        justify-content: space-between;
+        min-width: 0;
+        padding: clamp(28px, 5vw, 72px);
+        border-right: 1px solid var(--relay-rule);
+      }
+
+      .eyebrow, .message-label, .state, .proof-kicker, .catalog-meta,
+      .wallet-state, .step-number, .composer-note {
+        font: 650 10px/1.25 ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+        letter-spacing: .09em;
+        text-transform: uppercase;
+      }
+
+      .eyebrow {
+        margin: 0 0 clamp(32px, 7vw, 90px);
+        color: var(--relay-accent);
+      }
+
+      h1 {
+        max-width: 620px;
+        margin: 0;
+        font-size: clamp(42px, 6.5vw, 94px);
+        font-weight: 520;
+        line-height: .91;
+        letter-spacing: -.065em;
+      }
+
+      .intro {
+        max-width: 520px;
+        margin: 28px 0 0;
+        color: var(--relay-muted);
+        font-size: clamp(14px, 1.7vw, 18px);
+      }
+
+      .rail-foot {
+        display: grid;
+        gap: 14px;
+        margin-top: 48px;
+      }
+
+      .rail-rule {
+        display: grid;
+        grid-template-columns: 34px 1fr;
+        gap: 10px;
+        align-items: baseline;
+        padding-top: 12px;
+        border-top: 1px solid var(--relay-rule);
+        color: var(--relay-muted);
+        font-size: 12px;
+      }
+
+      .rail-rule strong {
+        color: var(--relay-ink);
+        font: 650 10px/1.25 ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+      }
+
+      .chat {
+        display: grid;
+        grid-template-rows: auto minmax(360px, 1fr) auto;
+        min-width: 0;
+        max-height: min(900px, calc(100vh - 70px));
+        background: var(--relay-paper);
+      }
+
+      .chat-head {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        gap: 18px;
+        min-height: 66px;
+        padding: 16px clamp(20px, 3.2vw, 44px);
+        border-bottom: 1px solid var(--relay-rule);
+      }
+
+      .chat-title { font-weight: 570; letter-spacing: -.02em; }
+      .wallet-state { color: var(--relay-accent); text-align: right; }
+      .wallet-state.error { color: var(--relay-muted); }
+
+      .messages {
+        overflow: auto;
+        padding: clamp(24px, 4vw, 50px) clamp(20px, 4vw, 56px);
+        scroll-behavior: smooth;
+      }
+
+      .message {
+        display: grid;
+        grid-template-columns: 78px minmax(0, 1fr);
+        gap: 16px;
+        max-width: 900px;
+        margin: 0 0 34px;
+      }
+
+      .message.user { margin-left: auto; }
+      .message-label {
+        padding-top: 4px;
+        color: var(--relay-muted);
+      }
+      .message.agent .message-label { color: var(--relay-accent); }
+
+      .message-body {
+        min-width: 0;
+        font-size: clamp(16px, 1.6vw, 20px);
+        letter-spacing: -.015em;
+      }
+
+      .message-body > p { margin: 0; white-space: pre-wrap; }
+      .message.user .message-body {
+        padding: 16px 18px;
+        border: 1px solid var(--relay-rule);
+        background: var(--relay-bg);
+      }
+
+      .cards {
+        display: grid;
+        grid-template-columns: repeat(3, minmax(0, 1fr));
+        gap: 10px;
+        margin-top: 18px;
+      }
+
+      .card {
+        display: flex;
+        min-width: 0;
+        flex-direction: column;
+        border: 1px solid var(--relay-rule);
+        background: var(--relay-paper);
+      }
+
+      .card-media {
+        position: relative;
+        overflow: hidden;
+        aspect-ratio: 4 / 3;
+        border-bottom: 1px solid var(--relay-rule);
+        background: var(--relay-soft);
+      }
+
+      .card-media img {
+        display: block;
+        width: 100%;
+        height: 100%;
+        object-fit: cover;
+        mix-blend-mode: multiply;
+      }
+
+      .stock {
+        position: absolute;
+        top: 9px;
+        left: 9px;
+        padding: 5px 7px;
+        background: rgba(251, 250, 246, .94);
+        font: 650 9px/1 ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+        letter-spacing: .06em;
+        text-transform: uppercase;
+      }
+
+      .card-copy {
+        display: flex;
+        flex: 1;
+        flex-direction: column;
+        padding: 14px;
+      }
+
+      .card h3 {
+        min-height: 2.65em;
+        margin: 0;
+        font-size: 14px;
+        font-weight: 560;
+        line-height: 1.3;
+        letter-spacing: -.015em;
+      }
+
+      .price {
+        margin: 12px 0 0;
+        font: 650 13px/1.2 ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+      }
+
+      .catalog-meta {
+        display: block;
+        margin-top: 5px;
+        color: var(--relay-muted);
+        font-size: 8px;
+      }
+
+      .card-actions {
+        display: grid;
+        grid-template-columns: 1fr auto;
+        gap: 8px;
+        margin-top: auto;
+        padding-top: 16px;
+      }
+
+      .primary, .secondary, .send {
+        min-height: 42px;
+        border: 1px solid var(--relay-ink);
+        border-radius: 0;
+        cursor: pointer;
+        transition: background .16s ease, color .16s ease, opacity .16s ease;
+      }
+
+      .primary, .send {
+        background: var(--relay-ink);
+        color: var(--relay-paper);
+      }
+
+      .primary { padding: 9px 12px; font-size: 12px; }
+      .secondary {
+        padding: 9px 12px;
+        background: transparent;
+        color: var(--relay-ink);
+        text-decoration: none;
+        font-size: 12px;
+        text-align: center;
+      }
+
+      .primary:hover, .send:hover { background: var(--relay-accent); border-color: var(--relay-accent); }
+      .secondary:hover { color: var(--relay-accent); border-color: var(--relay-accent); }
+      button:disabled { cursor: not-allowed; opacity: .42; }
+
+      .delegate {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        gap: 16px;
+        margin-top: 12px;
+        padding: 14px 0;
+        border-top: 1px solid var(--relay-rule);
+        border-bottom: 1px solid var(--relay-rule);
+      }
+
+      .delegate span {
+        color: var(--relay-muted);
+        font-size: 12px;
+      }
+
+      .delegate .primary { flex: 0 0 auto; }
+
+      .progress {
+        margin-top: 18px;
+        border: 1px solid var(--relay-rule);
+        background: var(--relay-bg);
+      }
+
+      .progress-head {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        gap: 16px;
+        padding: 15px 17px;
+        border-bottom: 1px solid var(--relay-rule);
+      }
+
+      .progress-title { font-weight: 570; }
+      .state { color: var(--relay-muted); }
+      .state.active, .state.done { color: var(--relay-accent); }
+
+      .step {
+        display: grid;
+        grid-template-columns: 32px minmax(0, 1fr) auto;
+        gap: 12px;
+        align-items: start;
+        padding: 14px 17px;
+        border-bottom: 1px solid var(--relay-rule);
+      }
+      .step:last-of-type { border-bottom: 0; }
+      .step-number { color: var(--relay-muted); }
+      .step strong { display: block; font-size: 13px; font-weight: 560; }
+      .step p { margin: 3px 0 0; color: var(--relay-muted); font-size: 11px; }
+      .step-value {
+        overflow: hidden;
+        max-width: 190px;
+        color: var(--relay-muted);
+        font: 500 10px/1.3 ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+        text-align: right;
+        text-overflow: ellipsis;
+        white-space: nowrap;
+      }
+
+      .proof {
+        display: grid;
+        gap: 11px;
+        padding: 18px;
+        border-top: 1px solid var(--relay-ink);
+        background: var(--relay-ink);
+        color: var(--relay-paper);
+      }
+
+      .proof-kicker { color: #9fb1ef; }
+      .proof a {
+        width: fit-content;
+        color: var(--relay-paper);
+        font-size: clamp(18px, 2.5vw, 30px);
+        font-weight: 560;
+        letter-spacing: -.025em;
+        text-underline-offset: 5px;
+      }
+      .proof-code {
+        overflow: hidden;
+        font: 500 10px/1.4 ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+        text-overflow: ellipsis;
+        white-space: nowrap;
+      }
+
+      .composer {
+        padding: 14px clamp(20px, 3.2vw, 44px) 18px;
+        border-top: 1px solid var(--relay-rule);
+        background: var(--relay-paper);
+      }
+
+      .composer form {
+        display: grid;
+        grid-template-columns: minmax(0, 1fr) auto;
+        border-bottom: 1px solid var(--relay-ink);
+      }
+
+      .composer input {
+        min-width: 0;
+        min-height: 54px;
+        padding: 10px 8px 10px 0;
+        border: 0;
+        border-radius: 0;
+        background: transparent;
+        color: var(--relay-ink);
+        font-size: 16px;
+      }
+      .composer input:focus { outline: 0; }
+      .composer input::placeholder { color: #8b8b83; }
+      .send {
+        align-self: center;
+        min-height: 38px;
+        padding: 8px 18px;
+      }
+      .composer-note {
+        margin: 10px 0 0;
+        color: var(--relay-muted);
+        font-size: 8px;
+      }
+
+      @media (max-width: 980px) {
+        :host, .shell { min-height: auto; }
+        .shell { grid-template-columns: 1fr; }
+        .editorial {
+          min-height: auto;
+          padding: 38px 24px 34px;
+          border-right: 0;
+          border-bottom: 1px solid var(--relay-rule);
+        }
+        .eyebrow { margin-bottom: 30px; }
+        h1 { max-width: 800px; font-size: clamp(42px, 12vw, 80px); }
+        .rail-foot { grid-template-columns: repeat(3, 1fr); margin-top: 34px; }
+        .chat { max-height: none; }
+        .messages { min-height: 480px; max-height: 70vh; }
+      }
+
+      @media (max-width: 720px) {
+        .rail-foot { grid-template-columns: 1fr; gap: 6px; }
+        .message { grid-template-columns: 56px minmax(0, 1fr); gap: 10px; }
+        .cards { grid-template-columns: 1fr; }
+        .card { display: grid; grid-template-columns: 116px minmax(0, 1fr); }
+        .card-media { aspect-ratio: auto; border-right: 1px solid var(--relay-rule); border-bottom: 0; }
+        .step { grid-template-columns: 26px minmax(0, 1fr); }
+        .step-value { grid-column: 2; max-width: none; text-align: left; }
+        .delegate { align-items: stretch; flex-direction: column; }
+        .composer { padding-inline: 16px; }
+      }
+
+      @media (prefers-reduced-motion: reduce) {
+        .messages { scroll-behavior: auto; }
+        .primary, .secondary, .send { transition: none; }
+      }
+    </style>
+
+    <main class="shell">
+      <aside class="editorial">
+        <div>
+          <p class="eyebrow">Relay / Agent-native commerce</p>
+          <h1 id="heading">Tell it what you need.</h1>
+          <p class="intro" id="intro">Search the live catalog, set a budget, and let the agent settle in USDC on Solana devnet.</p>
+        </div>
+        <div class="rail-foot" aria-label="How Relay purchases work">
+          <div class="rail-rule"><strong>01</strong><span>Real Shopify catalog</span></div>
+          <div class="rail-rule"><strong>02</strong><span>0 payment approval clicks</span></div>
+          <div class="rail-rule"><strong>03</strong><span>On-chain USDC proof</span></div>
+        </div>
+      </aside>
+
+      <section class="chat" aria-label="Relay shopping chat">
+        <header class="chat-head">
+          <span class="chat-title">Shopping conversation</span>
+          <span class="wallet-state" id="wallet-state">[ CHECKING AGENT ]</span>
+        </header>
+        <div class="messages" id="messages" role="log" aria-live="polite" aria-relevant="additions"></div>
+        <footer class="composer">
+          <form id="composer">
+            <input
+              id="prompt"
+              type="text"
+              maxlength="240"
+              autocomplete="off"
+              aria-label="Describe what you want to buy"
+              placeholder="wireless earbuds under 10 dollars"
+            >
+            <button class="send" id="send" type="submit">Send ↗</button>
+          </form>
+          <p class="composer-note">Catalog search is non-binding. Payment starts only after you choose or delegate a candidate.</p>
+        </footer>
+      </section>
+    </main>
+  `;
+
+  class RelayAgentChat extends HTMLElement {
+    connectedCallback() {
+      if (this.shadowRoot) return;
+
+      const catalogNode = this.querySelector("[data-relay-catalog]");
+      this.catalog = this.parseCatalog(catalogNode?.textContent || "[]");
+      this.baseUrl = this.cleanBaseUrl(this.getAttribute("agent-base-url") || "");
+      this.shipTo = (this.getAttribute("ship-to") || "").trim() || "Google Startup Campus, Seoul, KR";
+      this.currency = (this.getAttribute("currency") || "USD").trim().toUpperCase();
+      this.lastCandidates = [];
+      this.lastIntent = null;
+      this.busy = false;
+      this.history = [];
+      this.cluster = "devnet";
+      this.walletAddress = "";
+      this.sessionKey = `relay-agent-chat:${window.location.pathname}`;
+
+      this.attachShadow({ mode: "open" }).append(view.content.cloneNode(true));
+      this.$ = (selector) => this.shadowRoot.querySelector(selector);
+      this.$("#heading").textContent =
+        (this.getAttribute("heading") || "").trim() || "Tell it what you need.";
+      this.$("#intro").textContent =
+        (this.getAttribute("intro") || "").trim() ||
+        "Search the live catalog, set a budget, and let the agent settle in USDC on Solana devnet.";
+      this.$("#composer").addEventListener("submit", (event) => this.submit(event));
+
+      if (!this.restoreHistory()) {
+        this.appendMessage(
+          "agent",
+          "What are you looking for? I’ll search this store’s live catalog first. You stay in control until you choose an item or delegate the choice.",
+        );
+      }
+      this.loadWallet();
+    }
+
+    cleanBaseUrl(value) {
+      return value.trim().replace(/\/+$/, "");
+    }
+
+    isConfigured() {
+      return Boolean(this.baseUrl) && !/YOUR-|localhost|127\.0\.0\.1|example\.com/i.test(this.baseUrl);
+    }
+
+    parseCatalog(value) {
+      try {
+        const parsed = JSON.parse(value);
+        return Array.isArray(parsed) ? parsed : [];
+      } catch {
+        return [];
+      }
+    }
+
+    restoreHistory() {
+      try {
+        const saved = JSON.parse(sessionStorage.getItem(this.sessionKey) || "[]");
+        if (!Array.isArray(saved) || !saved.length) return false;
+        saved.slice(-18).forEach((message) => {
+          if (message?.role && message?.text) {
+            this.appendMessage(message.role, message.text, { save: false });
+          }
+        });
+        this.history = saved.slice(-18);
+        return true;
+      } catch {
+        return false;
+      }
+    }
+
+    saveHistory() {
+      try {
+        sessionStorage.setItem(this.sessionKey, JSON.stringify(this.history.slice(-18)));
+      } catch {}
+    }
+
+    appendMessage(role, text, options = {}) {
+      const message = document.createElement("article");
+      message.className = `message ${role === "user" ? "user" : "agent"}`;
+
+      const label = document.createElement("span");
+      label.className = "message-label";
+      label.textContent = role === "user" ? "You" : "Relay";
+
+      const body = document.createElement("div");
+      body.className = "message-body";
+      const copy = document.createElement("p");
+      copy.textContent = text;
+      body.append(copy);
+      message.append(label, body);
+      this.$("#messages").append(message);
+
+      if (options.save !== false) {
+        this.history.push({ role: role === "user" ? "user" : "agent", text });
+        this.saveHistory();
+      }
+      this.scrollToLatest();
+      return { message, body };
+    }
+
+    scrollToLatest() {
+      requestAnimationFrame(() => {
+        const list = this.$("#messages");
+        list.scrollTop = list.scrollHeight;
+      });
+    }
+
+    errorMessage(error) {
+      if (typeof error === "string") return error;
+      if (Array.isArray(error)) {
+        return error.map((item) => item?.msg || JSON.stringify(item)).join(", ");
+      }
+      return error?.message || "The agent request failed.";
+    }
+
+    async fetchJson(path, options = {}) {
+      if (!this.isConfigured()) {
+        throw new Error("The buyer agent URL is not configured for this section.");
+      }
+      let parsedBase;
+      try {
+        parsedBase = new URL(this.baseUrl);
+      } catch {
+        throw new Error("agent-base-url is not a valid URL.");
+      }
+      if (window.location.protocol === "https:" && parsedBase.protocol !== "https:") {
+        throw new Error("Shopify requires an HTTPS buyer-agent URL.");
+      }
+
+      const response = await fetch(this.baseUrl + path, { mode: "cors", ...options });
+      const responseText = await response.text();
+      let payload = {};
+      try {
+        payload = responseText ? JSON.parse(responseText) : {};
+      } catch {
+        throw new Error(responseText || `Invalid response from ${path}`);
+      }
+      if (!response.ok) {
+        throw new Error(this.errorMessage(payload.detail || payload.reason || `HTTP ${response.status}`));
+      }
+      if (payload.error) throw new Error(this.errorMessage(payload.error));
+      return payload;
+    }
+
+    async loadWallet() {
+      const state = this.$("#wallet-state");
+      if (!this.isConfigured()) {
+        state.textContent = "[ CONFIGURE AGENT URL ]";
+        state.classList.add("error");
+        return;
+      }
+      try {
+        const balances = await this.fetchJson("/wallet-balances");
+        if (balances.error) throw new Error(balances.error);
+        this.cluster = balances.cluster || "devnet";
+        this.walletAddress = balances.buyer?.address || "";
+        const usdc = balances.buyer?.usdc ?? "—";
+        state.textContent = `[ AGENT READY · ${usdc} USDC ]`;
+        state.title = this.walletAddress;
+        state.classList.remove("error");
+      } catch (error) {
+        try {
+          const health = await this.fetchJson("/health");
+          if (!health.ok) throw new Error("Buyer health check failed");
+          state.textContent = "[ AGENT READY · DEVNET ]";
+          state.title = `Balance display temporarily unavailable: ${this.errorMessage(error)}`;
+          state.classList.remove("error");
+        } catch (healthError) {
+          state.textContent = "[ AGENT UNAVAILABLE ]";
+          state.title = this.errorMessage(healthError);
+          state.classList.add("error");
+        }
+      }
+    }
+
+    parseBudget(text) {
+      const patterns = [
+        /(?:under|below|less\s+than|up\s+to|max(?:imum)?|budget(?:\s+of)?)\s*\$?\s*(\d+(?:\.\d+)?)/i,
+        /\$\s*(\d+(?:\.\d+)?)/,
+        /(\d+(?:\.\d+)?)\s*(?:dollars?|usd|usdc)\b/i,
+      ];
+      for (const pattern of patterns) {
+        const match = text.match(pattern);
+        const value = Number.parseFloat(match?.[1] || "");
+        if (Number.isFinite(value) && value > 0) return value;
+      }
+      return null;
+    }
+
+    queryTokens(text) {
+      const stop = new Set([
+        "a", "an", "and", "below", "budget", "buy", "choose", "dollar", "dollars",
+        "find", "for", "get", "i", "less", "max", "maximum", "me", "need", "of",
+        "please", "show", "something", "than", "the", "to", "under", "up", "usd",
+        "usdc", "want", "with", "you",
+      ]);
+      return text
+        .toLowerCase()
+        .replace(/\d+(?:\.\d+)?/g, " ")
+        .split(/[^\p{L}\p{N}]+/u)
+        .filter((token) => token.length > 1 && !stop.has(token));
+    }
+
+    productPrice(product) {
+      return Number(product.priceCents || 0) / 100;
+    }
+
+    productScore(product, tokens) {
+      if (!tokens.length) return 1;
+      const title = String(product.title || "").toLowerCase();
+      const sku = String(product.sku || "").toLowerCase();
+      const searchable = `${title} ${sku} ${product.tags || ""} ${product.description || ""}`.toLowerCase();
+      return tokens.reduce((score, token) => {
+        if (title.includes(token)) return score + 6;
+        if (sku.includes(token)) return score + 4;
+        if (searchable.includes(token)) return score + 2;
+        return score;
+      }, 0);
+    }
+
+    searchCatalog(text) {
+      const budget = this.parseBudget(text);
+      const tokens = this.queryTokens(text);
+      const available = this.catalog.filter((product) => product.available);
+      const scored = available
+        .map((product) => ({ product, score: this.productScore(product, tokens) }))
+        .filter((entry) => entry.score > 0)
+        .sort((left, right) =>
+          right.score - left.score ||
+          this.productPrice(left.product) - this.productPrice(right.product) ||
+          String(left.product.title).localeCompare(String(right.product.title)),
+        );
+
+      const realCatalogMatches = scored.filter(
+        (entry) => !/^relay$/i.test(String(entry.product.vendor || "").trim()),
+      );
+      const rankedEntries = realCatalogMatches.length ? realCatalogMatches : scored;
+      const preferredAvailable = available.filter(
+        (product) => !/^relay$/i.test(String(product.vendor || "").trim()),
+      );
+      const ranked = rankedEntries.length
+        ? rankedEntries.map((entry) => entry.product)
+        : [...(preferredAvailable.length ? preferredAvailable : available)].sort(
+            (left, right) => this.productPrice(left) - this.productPrice(right),
+          );
+      const withinBudget = budget == null
+        ? ranked
+        : ranked.filter((product) => this.productPrice(product) <= budget);
+      const candidates = (withinBudget.length ? withinBudget : ranked).slice(0, 3);
+      return { budget, tokens, candidates, hasBudgetMatch: budget == null || withinBudget.length > 0 };
+    }
+
+    selectionIndex(text) {
+      const normalized = text.toLowerCase();
+      if (/\b(?:first|1st|one|number\s*1)\b/.test(normalized)) return 0;
+      if (/\b(?:second|2nd|two|number\s*2)\b/.test(normalized)) return 1;
+      if (/\b(?:third|3rd|three|number\s*3)\b/.test(normalized)) return 2;
+      return null;
+    }
+
+    delegated(text) {
+      return /\b(?:delegate|you choose|agent choose|cheapest|best one|pick for me|buy it|go ahead)\b/i.test(text);
+    }
+
+    async submit(event) {
+      event.preventDefault();
+      if (this.busy) return;
+      const input = this.$("#prompt");
+      const text = input.value.trim();
+      if (!text) return;
+      input.value = "";
+      this.appendMessage("user", text);
+
+      if (this.lastCandidates.length) {
+        const requestedIndex = this.selectionIndex(text);
+        if (requestedIndex != null && this.lastCandidates[requestedIndex]) {
+          await this.startPurchase(this.lastCandidates[requestedIndex], { announceSelection: false });
+          return;
+        }
+        if (this.delegated(text)) {
+          await this.startPurchase(this.lastCandidates[0], { announceSelection: false });
+          return;
+        }
+      }
+      this.showCandidates(text);
+    }
+
+    formatMoney(product) {
+      const value = this.productPrice(product);
+      try {
+        return new Intl.NumberFormat(undefined, {
+          style: "currency",
+          currency: this.currency,
+          minimumFractionDigits: 2,
+        }).format(value);
+      } catch {
+        return `${value.toFixed(2)} ${this.currency}`;
+      }
+    }
+
+    showCandidates(text) {
+      const intent = this.searchCatalog(text);
+      this.lastIntent = intent;
+      this.lastCandidates = intent.candidates;
+
+      if (!this.catalog.length) {
+        this.appendMessage(
+          "agent",
+          "The live Shopify catalog is empty right now, so I can’t present a real product candidate.",
+        );
+        return;
+      }
+      if (!intent.candidates.length) {
+        this.appendMessage(
+          "agent",
+          "I couldn’t find an in-stock item in the live catalog. Try a different product description.",
+        );
+        return;
+      }
+
+      const cap = intent.budget == null ? "" : ` under your ${intent.budget.toFixed(2)} USDC cap`;
+      const copy = intent.hasBudgetMatch
+        ? `I found ${intent.candidates.length} live catalog ${intent.candidates.length === 1 ? "match" : "matches"}${cap}. Prices and availability below come directly from Shopify.`
+        : `Nothing in stock fits the ${intent.budget.toFixed(2)} USDC cap. These are the closest live catalog matches; I won’t let the wallet exceed your cap.`;
+      const { body } = this.appendMessage("agent", copy);
+
+      const cards = document.createElement("div");
+      cards.className = "cards";
+      intent.candidates.forEach((product) => cards.append(this.productCard(product, intent.budget)));
+      body.append(cards);
+
+      if (intent.hasBudgetMatch) {
+        const delegate = document.createElement("div");
+        delegate.className = "delegate";
+        const note = document.createElement("span");
+        note.textContent = "Or delegate the choice: I’ll take the best-ranked in-stock match.";
+        const button = document.createElement("button");
+        button.className = "primary";
+        button.type = "button";
+        button.textContent = "Let agent choose";
+        button.addEventListener("click", () =>
+          this.startPurchase(intent.candidates[0], { budget: intent.budget }),
+        );
+        delegate.append(note, button);
+        body.append(delegate);
+      }
+      this.scrollToLatest();
+    }
+
+    productCard(product, budget) {
+      const card = document.createElement("article");
+      card.className = "card";
+
+      const media = document.createElement("div");
+      media.className = "card-media";
+      if (product.image) {
+        const image = document.createElement("img");
+        image.src = product.image;
+        image.alt = "";
+        image.loading = "lazy";
+        image.addEventListener("error", () => image.remove());
+        media.append(image);
+      }
+      const stock = document.createElement("span");
+      stock.className = "stock";
+      stock.textContent = product.available ? "In stock" : "Sold out";
+      media.append(stock);
+
+      const copy = document.createElement("div");
+      copy.className = "card-copy";
+      const title = document.createElement("h3");
+      title.textContent = product.title || "Untitled product";
+      const price = document.createElement("p");
+      price.className = "price";
+      price.textContent = this.formatMoney(product);
+      const meta = document.createElement("span");
+      meta.className = "catalog-meta";
+      meta.textContent = `${product.vendor || "Shopify"} catalog · final quote in USDC`;
+
+      const actions = document.createElement("div");
+      actions.className = "card-actions";
+      const choose = document.createElement("button");
+      choose.className = "primary";
+      choose.type = "button";
+      const overCap = budget != null && this.productPrice(product) > budget;
+      choose.disabled = !product.available || overCap;
+      choose.textContent = overCap ? "Over cap" : "Choose + pay";
+      choose.addEventListener("click", () => this.startPurchase(product, { budget }));
+
+      const detail = document.createElement("a");
+      detail.className = "secondary";
+      detail.href = product.url || `/products/${encodeURIComponent(product.handle || "")}`;
+      detail.textContent = "Details ↗";
+      detail.setAttribute("aria-label", `View details for ${product.title}`);
+      actions.append(choose, detail);
+      copy.append(title, price, meta, actions);
+      card.append(media, copy);
+      return card;
+    }
+
+    defaultBudget(product) {
+      return Math.max(1, Math.ceil(this.productPrice(product) * 1.25 * 100) / 100);
+    }
+
+    createProgress(product, budget) {
+      const { body } = this.appendMessage(
+        "agent",
+        `Delegation accepted for ${product.title}. The payment rail now runs autonomously; there are no wallet or Shopify checkout approval clicks.`,
+      );
+      const progress = document.createElement("section");
+      progress.className = "progress";
+      progress.setAttribute("aria-label", "Autonomous purchase progress");
+      progress.innerHTML = `
+        <div class="progress-head">
+          <span class="progress-title">Autonomous settlement</span>
+          <span class="state active" data-run-state>[ IN PROGRESS ]</span>
+        </div>
+        <div class="step" data-step="1">
+          <span class="step-number">01</span>
+          <div><strong>A2A payment request</strong><p>Shopping agent sources the exact catalog item and issues a Solana Pay request.</p></div>
+          <span class="step-value">REQUESTING</span>
+        </div>
+        <div class="step" data-step="2">
+          <span class="step-number">02</span>
+          <div><strong>Autonomous signature</strong><p>Buyer wallet signs after the budget guard accepts the quote.</p></div>
+          <span class="step-value">QUEUED</span>
+        </div>
+        <div class="step" data-step="3">
+          <span class="step-number">03</span>
+          <div><strong>USDC on-chain</strong><p>Transfer is broadcast on Solana devnet with a unique reference.</p></div>
+          <span class="step-value">QUEUED</span>
+        </div>
+        <div class="step" data-step="4">
+          <span class="step-number">04</span>
+          <div><strong>Verify + order</strong><p>Shopping agent verifies by reference before writing the Shopify order ledger.</p></div>
+          <span class="step-value">QUEUED</span>
+        </div>
+      `;
+      body.append(progress);
+      this.updateStep(progress, 1, "ACTIVE", `${budget.toFixed(2)} USDC CAP`);
+      this.scrollToLatest();
+      return progress;
+    }
+
+    updateStep(progress, number, state, value) {
+      const step = progress.querySelector(`[data-step="${number}"]`);
+      if (!step) return;
+      step.dataset.state = state.toLowerCase();
+      const output = step.querySelector(".step-value");
+      output.textContent = value || state;
+      output.title = value || state;
+    }
+
+    short(value, head = 9, tail = 7) {
+      const text = String(value || "");
+      if (!text) return "—";
+      return text.length > head + tail + 3
+        ? `${text.slice(0, head)}…${text.slice(-tail)}`
+        : text;
+    }
+
+    safeExplorerUrl(value, signature) {
+      if (value) {
+        try {
+          const url = new URL(value);
+          if (url.protocol === "https:") return url.href;
+        } catch {}
+      }
+      return signature
+        ? `https://explorer.solana.com/tx/${encodeURIComponent(signature)}?cluster=${encodeURIComponent(this.cluster)}`
+        : "";
+    }
+
+    renderResult(progress, result, budget) {
+      const quote = result?.quote || {};
+      const payment = result?.payment || {};
+      const confirmation = result?.confirmation || {};
+      const signature = payment.txSignature || confirmation.txSignature || "";
+      const explorer = this.safeExplorerUrl(confirmation.explorer || payment.explorer, signature);
+      const status = String(confirmation.status || "").toLowerCase();
+      const reason = String(result?.reason || "");
+      const quotedAmount = quote.price?.amount
+        ? `${quote.price.amount} ${quote.price.currency || "USDC"}`
+        : "NO QUOTE";
+
+      if (!quote.orderRef && !quote.reference && !quote.title) {
+        throw new Error(reason || "The shopping agent returned no quote.");
+      }
+      this.updateStep(progress, 1, "DONE", `${quotedAmount} · ${this.short(quote.reference)}`);
+
+      if (!signature) {
+        this.updateStep(progress, 2, "SKIPPED", "NOT SIGNED");
+        this.updateStep(progress, 3, "SKIPPED", "NOT SENT");
+        this.updateStep(progress, 4, "SKIPPED", "NOT RECORDED");
+        const runState = progress.querySelector("[data-run-state]");
+        runState.textContent = result?.ok === false ? "[ BUDGET GUARD ]" : "[ FAILED ]";
+        runState.className = "state";
+        const message = reason || `No payment signature was returned within the ${budget.toFixed(2)} USDC cap.`;
+        this.appendMessage("agent", `${message} No funds were sent.`);
+        return;
+      }
+
+      this.updateStep(progress, 2, "DONE", `SIGNED · ${this.short(signature)}`);
+      this.updateStep(progress, 3, "DONE", `ON-CHAIN · ${String(quote.network || this.cluster).toUpperCase()}`);
+
+      if (status === "paid") {
+        const orderId = confirmation.shopifyOrderId || confirmation.orderRef || quote.orderRef;
+        this.updateStep(progress, 4, "DONE", `PAID · ${this.short(orderId)}`);
+        const runState = progress.querySelector("[data-run-state]");
+        runState.textContent = "[ PAID ]";
+        runState.className = "state done";
+        this.showProof(progress, explorer, signature, orderId);
+        this.appendMessage(
+          "agent",
+          `Purchase complete: ${quote.title || "catalog item"} for ${quotedAmount}. Shopify order ${orderId || "recorded"} was created only after on-chain verification.`,
+        );
+      } else if (status === "pending") {
+        this.updateStep(progress, 4, "ACTIVE", `VERIFYING · ${this.short(confirmation.orderRef || quote.orderRef)}`);
+        const runState = progress.querySelector("[data-run-state]");
+        runState.textContent = "[ VERIFYING ]";
+        this.showProof(progress, explorer, signature, confirmation.orderRef || quote.orderRef);
+        this.appendMessage("agent", "The transfer is on-chain and the order reference is still being verified.");
+      } else {
+        this.updateStep(progress, 4, "FAILED", (status || "FAILED").toUpperCase());
+        const runState = progress.querySelector("[data-run-state]");
+        runState.textContent = `[ ${(status || "FAILED").toUpperCase()} ]`;
+        runState.className = "state";
+        this.showProof(progress, explorer, signature, confirmation.orderRef || quote.orderRef);
+        this.appendMessage("agent", reason || `Settlement finished with status: ${status || "unknown"}.`);
+      }
+    }
+
+    showProof(progress, explorer, signature, orderId) {
+      if (!signature || !explorer) return;
+      const proof = document.createElement("div");
+      proof.className = "proof";
+      const kicker = document.createElement("span");
+      kicker.className = "proof-kicker";
+      kicker.textContent = `[ ON-CHAIN PROOF · ORDER ${this.short(orderId)} ]`;
+      const link = document.createElement("a");
+      link.href = explorer;
+      link.target = "_blank";
+      link.rel = "noopener noreferrer";
+      link.textContent = "Open Solana explorer ↗";
+      const code = document.createElement("span");
+      code.className = "proof-code";
+      code.textContent = signature;
+      code.title = signature;
+      proof.append(kicker, link, code);
+      progress.append(proof);
+    }
+
+    renderFailure(progress, error) {
+      [1, 2, 3, 4].forEach((number) => {
+        this.updateStep(progress, number, number === 1 ? "FAILED" : "SKIPPED", number === 1 ? "REQUEST FAILED" : "NOT RUN");
+      });
+      const runState = progress.querySelector("[data-run-state]");
+      runState.textContent = "[ FAILED ]";
+      runState.className = "state";
+      this.appendMessage("agent", `${this.errorMessage(error)} No Shopify checkout was opened.`);
+    }
+
+    setBusy(value) {
+      this.busy = value;
+      this.$("#send").disabled = value;
+      this.$("#prompt").disabled = value;
+      this.shadowRoot.querySelectorAll(".card button, .delegate button").forEach((button) => {
+        button.disabled = value || button.textContent === "Over cap";
+      });
+    }
+
+    async startPurchase(product, options = {}) {
+      if (this.busy || !product) return;
+      if (options.announceSelection !== false) {
+        this.appendMessage("user", `Choose ${product.title} and pay autonomously.`);
+      }
+      const budget = options.budget || this.lastIntent?.budget || this.defaultBudget(product);
+      const instruction =
+        `Buy "${product.title}" with a maximum budget of ${budget.toFixed(2)} USDC ` +
+        `and ship to ${this.shipTo}.`;
+      const progress = this.createProgress(product, budget);
+      this.setBusy(true);
+
+      const waitingUpdate = window.setTimeout(() => {
+        this.updateStep(progress, 1, "ACTIVE", "AWAITING A2A RESPONSE");
+      }, 1800);
+
+      try {
+        const result = await this.fetchJson("/buy", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ text: instruction }),
+        });
+        this.renderResult(progress, result, budget);
+      } catch (error) {
+        this.renderFailure(progress, error);
+      } finally {
+        window.clearTimeout(waitingUpdate);
+        this.setBusy(false);
+        this.$("#prompt").focus();
+        this.scrollToLatest();
+      }
+    }
+  }
+
+  customElements.define("relay-agent-chat", RelayAgentChat);
+})();
+</script>
+{% endraw %}
+
+{% schema %}
+{
+  "name": "Relay agent chat",
+  "tag": "section",
+  "class": "relay-agent-chat-home",
+  "settings": [
+    {
+      "type": "text",
+      "id": "agent_base_url",
+      "label": "Buyer agent base URL",
+      "default": "https://buyer-1018608922006.us-central1.run.app",
+      "info": "Public HTTPS buyer API. Never use Shopify checkout or localhost."
+    },
+    {
+      "type": "text",
+      "id": "ship_to",
+      "label": "Demo shipping destination",
+      "default": "Google Startup Campus, Seoul, KR"
+    },
+    {
+      "type": "text",
+      "id": "heading",
+      "label": "Heading",
+      "default": "Tell it what you need."
+    },
+    {
+      "type": "textarea",
+      "id": "intro",
+      "label": "Introduction",
+      "default": "Search the live catalog, set a budget, and let the agent settle in USDC on Solana devnet."
+    }
+  ],
+  "presets": [
+    {
+      "name": "Relay agent chat"
+    }
+  ]
+}
+{% endschema %}

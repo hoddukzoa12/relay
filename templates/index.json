@@ -1,0 +1,16 @@
+{
+  "sections": {
+    "relay_agent_chat": {
+      "type": "relay-agent-chat",
+      "settings": {
+        "agent_base_url": "https://buyer-1018608922006.us-central1.run.app",
+        "ship_to": "Google Startup Campus, Seoul, KR",
+        "heading": "Tell it what you need.",
+        "intro": "Search the live catalog, set a budget, and let the agent settle in USDC on Solana devnet."
+      }
+    }
+  },
+  "order": [
+    "relay_agent_chat"
+  ]
+}
