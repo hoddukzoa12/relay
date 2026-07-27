@@ -278,6 +278,45 @@ def test_preview_parses_dsers_tabular_skus() -> None:
     ]
 
 
+def test_preview_budget_includes_final_broker_markup() -> None:
+    preview = {
+        "variants": [
+            {
+                "sku": "NEAR-CAP",
+                "cost": "4.00",
+                "sell_price": "4.60",
+                "stock": 10,
+            }
+        ]
+    }
+
+    with pytest.raises(
+        dsers_sourcing.DSersSourcingUnavailable,
+        match="final broker quote",
+    ):
+        dsers_sourcing.validate_margin(preview, Decimal("5"))
+
+
+def test_existing_exact_source_is_reused_without_another_push() -> None:
+    client = FakeDSers()
+    client.pushed = True
+    with patch.object(
+        dsers_sourcing.service_clients,
+        "commerce_mark_sourced_product",
+        side_effect=metadata_response,
+    ), patch.object(
+        dsers_sourcing.service_clients,
+        "commerce_product_by_handle",
+        side_effect=resolved_product,
+    ):
+        result = dsers_sourcing.dsers_store_push(
+            "import-1", SOURCE_URL, Decimal("10"), client=client
+        )
+
+    assert result["push"]["reused_existing_push"] is True
+    assert "dsers_store_push" not in [name for name, _args in client.calls]
+
+
 @pytest.mark.parametrize(
     "query",
     [

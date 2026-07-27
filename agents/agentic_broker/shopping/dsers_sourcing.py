@@ -8,7 +8,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from datetime import date
-from decimal import Decimal, InvalidOperation
+from decimal import Decimal, InvalidOperation, ROUND_HALF_UP
 import logging
 import re
 from typing import Any, Iterable
@@ -223,10 +223,14 @@ def dsers_find_product(
     )
 
 
-def _import_list(client: DSersMCPClient) -> dict[str, Any]:
-    return client.call_tool(
-        "dsers_import_list", {"page": 1, "page_size": 100}
-    )
+def _import_list(
+    client: DSersMCPClient, source_url: str = ""
+) -> dict[str, Any]:
+    arguments: dict[str, Any] = {"page": 1, "page_size": 100}
+    product_id = _supplier_product_id(source_url)
+    if product_id:
+        arguments["keyword"] = product_id
+    return client.call_tool("dsers_import_list", arguments)
 
 
 def dsers_product_import(
@@ -237,7 +241,9 @@ def dsers_product_import(
 ) -> dict[str, Any]:
     """Import at most the configured count and reconcile ambiguous failures."""
     active_client = client or DSersMCPClient()
-    staged = _exact_source_record(_import_list(active_client), source_url)
+    staged = _exact_source_record(
+        _import_list(active_client, source_url), source_url
+    )
     if staged and _import_item_id(staged):
         return {
             "import_item_id": _import_item_id(staged),
@@ -265,7 +271,7 @@ def dsers_product_import(
         # DSers/CloudFront has returned 504 after committing mutations. Never
         # retry the import blindly: read staging and accept only an exact URL.
         reconciled = _exact_source_record(
-            _import_list(active_client), source_url
+            _import_list(active_client, source_url), source_url
         )
         if reconciled and _import_item_id(reconciled):
             return {
@@ -285,7 +291,7 @@ def dsers_product_import(
         item_id = _import_item_id(record or {})
     if not item_id:
         reconciled = _exact_source_record(
-            _import_list(active_client), source_url
+            _import_list(active_client, source_url), source_url
         )
         item_id = _import_item_id(reconciled or {})
     if not item_id:
@@ -428,12 +434,19 @@ def validate_margin(
     affordable = [
         variant
         for variant in variants
-        if variant.stock > 0 and variant.sale_price <= budget
+        if variant.stock > 0
+        and (
+            variant.sale_price
+            * (
+                Decimal("1")
+                + Decimal(str(settings.markup_pct)) / Decimal("100")
+            )
+        ).quantize(Decimal("0.01"), rounding=ROUND_HALF_UP) <= budget
     ]
     if not affordable:
         raise DSersSourcingUnavailable(
-            f"DSers preview has no in-stock positive-margin variant within "
-            f"{budget} USDC"
+            "DSers preview has no in-stock positive-margin variant whose "
+            f"final broker quote fits {budget} USDC"
         )
     return variants
 
@@ -473,11 +486,13 @@ def _discover_store(client: DSersMCPClient) -> tuple[str, dict[str, Any]]:
     return store_id, stores[0]
 
 
-def _my_products(client: DSersMCPClient, store_id: str) -> dict[str, Any]:
-    return client.call_tool(
-        "dsers_my_products",
-        {"store_id": store_id, "page": 1, "page_size": 100},
-    )
+def _my_products(
+    client: DSersMCPClient, store_id: str, cursor: str = ""
+) -> dict[str, Any]:
+    arguments = {"store_id": store_id, "page_size": 100}
+    if cursor:
+        arguments["cursor"] = cursor
+    return client.call_tool("dsers_my_products", arguments)
 
 
 def _active_source_record(
@@ -488,6 +503,28 @@ def _active_source_record(
         return None
     status = str(_field(record, "status") or "").casefold()
     return None if status in {"deleted", "offselling"} else record
+
+
+def _active_product_by_source(
+    client: DSersMCPClient,
+    store_id: str,
+    source_url: str,
+) -> dict[str, Any] | None:
+    cursor = ""
+    seen: set[str] = set()
+    for _page in range(20):
+        payload = _my_products(client, store_id, cursor)
+        record = _active_source_record(payload, source_url)
+        if record:
+            return record
+        next_cursor = str(payload.get("next_cursor") or "")
+        if not next_cursor or next_cursor in seen:
+            return None
+        seen.add(next_cursor)
+        cursor = next_cursor
+    raise DSersSourcingUnavailable(
+        "DSers product lookup exceeded the bounded pagination limit"
+    )
 
 
 def _shopify_product_id(record: dict[str, Any]) -> str:
@@ -595,8 +632,8 @@ def dsers_store_push(
     preview = dsers_product_preview(import_item_id, client=active_client)
     variants = validate_margin(preview, budget)
     store_id, _store = _discover_store(active_client)
-    live_before = _active_source_record(
-        _my_products(active_client, store_id), source_url
+    live_before = _active_product_by_source(
+        active_client, store_id, source_url
     )
     push_arguments = {
         "import_item_id": import_item_id,
@@ -624,8 +661,8 @@ def dsers_store_push(
             )
             pushed["confirmation"] = confirmation
     except Exception as exc:  # noqa: BLE001
-        live = _active_source_record(
-            _my_products(active_client, store_id), source_url
+        live = _active_product_by_source(
+            active_client, store_id, source_url
         )
         if not live:
             raise DSersSourcingUnavailable(
@@ -637,8 +674,7 @@ def dsers_store_push(
             "product": live,
         }
 
-    live_products = _my_products(active_client, store_id)
-    live = _active_source_record(live_products, source_url)
+    live = _active_product_by_source(active_client, store_id, source_url)
     result_record = next(
         (
             record
@@ -726,8 +762,13 @@ def source_missing_product(
             raise DSersSourcingUnavailable(
                 "DSers found no import-ready supplier product"
             )
-        multiplier = Decimal("1") + Decimal(str(settings.markup_pct)) / Decimal("100")
-        max_cost = budget / multiplier
+        multiplier = (
+            Decimal("1")
+            + Decimal(str(settings.markup_pct)) / Decimal("100")
+        )
+        # DSers sets the Shopify catalog price from cost, then Relay applies
+        # its broker markup to that reviewed catalog price.
+        max_cost = budget / multiplier / multiplier
         affordable = [
             record
             for record in candidates
