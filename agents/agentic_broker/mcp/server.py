@@ -43,14 +43,42 @@ def request_quote(query: str, budget: float, ship_to: str) -> dict[str, Any]:
     """Request a product quote and agent-native Solana Pay payment request."""
     if budget <= 0:
         raise ValueError("budget must be positive")
-    return buyer_tools.request_quote(query, budget, ship_to)
+    try:
+        return buyer_tools.request_quote(
+            query,
+            budget,
+            ship_to,
+            delegator=auth.current_wallet(),
+        )
+    except buyer_tools.DelegationApprovalRequiredError as exc:
+        return exc.response
 
 
 def authorize_payment(
     pay_to: str, amount: str, reference: str
 ) -> dict[str, Any]:
     """Autonomously sign and broadcast the exact quoted devnet USDC payment."""
-    return buyer_tools.authorize_payment(pay_to, amount, reference)
+    delegator = auth.current_wallet()
+    try:
+        return buyer_tools.authorize_payment(
+            pay_to,
+            amount,
+            reference,
+            delegator=delegator,
+        )
+    except buyer_tools.DelegationApprovalRequiredError as exc:
+        return exc.response
+    except service_clients.ServiceRequestError as exc:
+        if not delegator or exc.status_code != 409:
+            raise
+        # The payments service performs the authoritative last-moment read. If
+        # allowance changes after our preflight, preserve its refusal and give
+        # the OAuth user a concrete one-time recovery link.
+        return buyer_tools.delegation_approval_response(
+            delegator,
+            amount,
+            reason=str(exc),
+        )
 
 
 def settle(

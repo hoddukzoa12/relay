@@ -198,7 +198,7 @@ export interface PayInput {
   payTo: string;
   amount: string;
   reference: string;
-  /** Clerk-verified human wallet. Omitted on autonomous MCP/A2A/CLI calls. */
+  /** Server-verified human wallet. Omitted only when no human principal exists. */
   delegator?: string;
 }
 
@@ -213,9 +213,10 @@ async function submitPayment(
   try {
     await assertUsdcDecimals();
 
-    // A human-present payment spends from the Clerk-verified user's ATA with
-    // the buyer agent as SPL delegate. Agent-native calls omit `delegator` and
-    // retain the original buyer-wallet source with zero human clicks.
+    // Any authenticated human payment spends from that user's ATA with the
+    // buyer agent as SPL delegate, independent of web/MCP/A2A transport.
+    // Service-principal and CLI calls omit `delegator` and retain the original
+    // buyer-wallet source with zero human clicks.
     const amount = toBaseUnits(input.amount);
     const sourceTokenAccount = input.delegator
       ? await delegatedSourceAccount(input.delegator, amount)

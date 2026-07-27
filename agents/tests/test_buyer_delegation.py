@@ -70,6 +70,56 @@ class BuyerDelegationTest(unittest.TestCase):
             buy.call_args.kwargs["intent_mandate"].signer_wallet, wallet
         )
 
+    def test_authenticated_buy_without_mandate_uses_session_wallet(self) -> None:
+        wallet = "Bn7UDWnm59HtG4zeSS2gF2MWT8bADFDuVaG5Y95HLoFf"
+        identity = auth.ClerkIdentity("user_test", "sess_test", wallet)
+        result = {"ok": True, "confirmation": {"status": "paid"}}
+        with (
+            patch.object(server.auth, "verify_session_token", return_value=identity),
+            patch.object(server.flow, "buy", return_value=result) as buy,
+        ):
+            response = self.client.post(
+                "/buy",
+                headers={"Authorization": "Bearer clerk-session"},
+                json={"query": "earbuds", "budget": 5, "shipTo": "Seoul"},
+            )
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(buy.call_args.kwargs["identity_wallet"], wallet)
+
+    def test_authenticated_intent_cannot_select_another_delegator(self) -> None:
+        wallet = "Bn7UDWnm59HtG4zeSS2gF2MWT8bADFDuVaG5Y95HLoFf"
+        identity = auth.ClerkIdentity("user_test", "sess_test", wallet)
+        mandate = {
+            "user_cart_confirmation_required": False,
+            "natural_language_description": "earbuds",
+            "requires_refundability": False,
+            "price_ceiling": {"amount": "5.00", "currency": "USDC"},
+            "ship_to": "Seoul",
+            "intent_expiry": "2099-01-01T00:00:00Z",
+            "signer_wallet": wallet,
+            "delegator": "attacker-wallet",
+            "signature": "signed-by-human",
+        }
+        with (
+            patch.object(server.auth, "verify_session_token", return_value=identity),
+            patch.object(server.flow, "buy") as buy,
+        ):
+            response = self.client.post(
+                "/buy",
+                headers={"Authorization": "Bearer clerk-session"},
+                json={
+                    "query": "earbuds",
+                    "budget": 5,
+                    "shipTo": "Seoul",
+                    "intentMandate": mandate,
+                },
+            )
+
+        self.assertEqual(response.status_code, 403)
+        self.assertIn("delegator does not match", response.json()["detail"])
+        buy.assert_not_called()
+
     def test_delegated_intent_requires_a_session(self) -> None:
         mandate = {
             "user_cart_confirmation_required": False,
@@ -254,6 +304,65 @@ class BuyerDelegationTest(unittest.TestCase):
             wallet,
         )
         self.assertEqual(result["txSignature"], "tx")
+
+    def test_deterministic_flow_threads_verified_identity_to_payment(self) -> None:
+        wallet = "Bn7UDWnm59HtG4zeSS2gF2MWT8bADFDuVaG5Y95HLoFf"
+        quote = {
+            "payTo": "merchant",
+            "price": {"amount": "1.00", "currency": "USDC"},
+            "reference": "reference",
+            "orderRef": "ord_1",
+            "ap2Mandates": {"intent": {"signature": "intent"}},
+        }
+        with (
+            patch.object(server.flow.tools, "request_quote", return_value=quote) as quote_call,
+            patch.object(
+                server.flow.tools,
+                "authorize_payment",
+                return_value={"txSignature": "tx"},
+            ) as pay,
+            patch.object(
+                server.flow.tools,
+                "confirm_settlement",
+                return_value={"status": "paid"},
+            ),
+        ):
+            result = server.flow.buy(
+                "earbuds",
+                5,
+                "Seoul",
+                identity_wallet=wallet,
+            )
+
+        self.assertTrue(result["ok"])
+        self.assertEqual(quote_call.call_args.kwargs["delegator"], wallet)
+        self.assertEqual(pay.call_args.kwargs["delegator"], wallet)
+
+    def test_deterministic_cli_flow_keeps_agent_wallet(self) -> None:
+        quote = {
+            "payTo": "merchant",
+            "price": {"amount": "1.00", "currency": "USDC"},
+            "reference": "reference",
+            "orderRef": "ord_1",
+        }
+        with (
+            patch.object(server.flow.tools, "request_quote", return_value=quote) as quote_call,
+            patch.object(
+                server.flow.tools,
+                "authorize_payment",
+                return_value={"txSignature": "tx"},
+            ) as pay,
+            patch.object(
+                server.flow.tools,
+                "confirm_settlement",
+                return_value={"status": "paid"},
+            ),
+        ):
+            result = server.flow.buy("earbuds", 5, "Seoul")
+
+        self.assertTrue(result["ok"])
+        self.assertIsNone(quote_call.call_args.kwargs["delegator"])
+        self.assertIsNone(pay.call_args.kwargs["delegator"])
 
 
 if __name__ == "__main__":

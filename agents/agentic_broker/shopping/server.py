@@ -106,6 +106,10 @@ def _handle_intent(message: dict[str, Any], data: dict[str, Any]) -> dict[str, A
     intent = IntentMandate(**data[INTENT_MANDATE_DATA_KEY])
     intent_data = intent.model_dump(exclude_none=True)
     if intent.signer_wallet:
+        if intent.delegator and intent.delegator != intent.signer_wallet:
+            raise ValueError(
+                "IntentMandate delegator does not match its signed human wallet"
+            )
         if not verify_wallet_signature(
             intent_data, intent.signature, intent.signer_wallet
         ):
@@ -322,8 +326,9 @@ def settle(
 ) -> OrderConfirmation:
     try:
         # This header is accepted only on the private Cloud Run service path.
-        # MCP derives it from a Clerk-verified identity; it is weaker than the
-        # wallet-signed AP2 IntentMandate and is attribution metadata only.
+        # MCP derives it from a Clerk-verified identity. Payment source was
+        # already selected before /pay; this value binds the verified owner to
+        # the Shopify ledger and cannot override any wallet at settlement.
         return broker.handle_settle(
             req,
             identity_wallet=x_relay_authenticated_wallet,

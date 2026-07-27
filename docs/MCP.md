@@ -9,8 +9,8 @@ is no stdio-only server and no Shopify checkout or human payment approval.
 | Tool | Inputs | Delegates to |
 |---|---|---|
 | `search_products` | `query`, `limit` (1–50) | commerce catalog |
-| `request_quote` | `query`, `budget`, `ship_to` | buyer → shopping A2A quote |
-| `authorize_payment` | `pay_to`, `amount`, `reference` | payments autonomous signer |
+| `request_quote` | `query`, `budget`, `ship_to` | buyer → shopping A2A quote, bound to the OAuth wallet when present |
+| `authorize_payment` | `pay_to`, `amount`, `reference` | autonomous signer; OAuth user ATA or service-principal agent wallet |
 | `settle` | `order_ref`, `reference`, `tx_signature` | shopping verification + Shopify ledger |
 | `get_order_status` | `order_ref` | shopping order lifecycle |
 | `refund_order` | `order_ref` | shopping full on-chain refund |
@@ -27,6 +27,25 @@ Pass the quote fields through unchanged. `authorize_payment` signs and
 broadcasts USDC autonomously. `settle` does not trust the supplied signature
 alone: shopping re-verifies the amount, recipient, and reference on Solana
 devnet before it records the Shopify order.
+
+For an OAuth caller, both quote and payment derive the payer only from the
+server-verified Clerk wallet. If its live delegation is missing, exhausted, or
+too small, the tool returns without submitting a transfer:
+
+```json
+{
+  "status": "approval-required",
+  "reason": "SPL delegation is missing or revoked; approve the broker once.",
+  "delegator": "<verified OAuth wallet>",
+  "requiredAmount": { "amount": "2.21", "currency": "USDC" },
+  "allowanceRemaining": { "amount": "0", "currency": "USDC" },
+  "balance": { "amount": "3", "currency": "USDC" },
+  "approvalUrl": "https://<store>/?relayAction=approve&relayAmount=2.21"
+}
+```
+
+Open `approvalUrl` once and retry. Relay never silently retries an
+authenticated user's request from the configured agent wallet.
 
 ## Authentication boundary
 
@@ -70,20 +89,20 @@ pre-registered public OAuth application with PKCE and its exact redirect URI.
 See Clerk's [MCP client guide](https://clerk.com/docs/guides/ai/mcp/connect-mcp-client)
 and [OAuth implementation guide](https://clerk.com/docs/guides/configure/auth-strategies/oauth/how-clerk-implements-oauth).
 
-### Order ownership
+### Payer and order ownership
 
-On `settle`, Relay forwards only the wallet resolved server-side from the Clerk
-token to the private shopping service. Shopify records that address as
-`buyer_wallet`, while the configured Relay buyer agent wallet still signs and
-sends USDC. OAuth-authenticated status and refund calls are limited to orders
-whose `buyer_wallet` matches the caller.
+Before `authorize_payment`, Relay passes only the wallet resolved server-side
+from the Clerk token as the SPL `delegator`; the buyer agent signs as delegate
+and pays transaction fees, but USDC leaves the user's ATA. On `settle`, the same
+identity is forwarded to the private shopping service and Shopify records it as
+`buyer_wallet`. OAuth-authenticated status and refund calls are limited to
+orders whose `buyer_wallet` matches the caller.
 
-The internal `X-Relay-Authenticated-Wallet` header is attribution metadata on
-the private MCP-to-shopping path. It is not accepted as an MCP header or tool
-argument and must never be trusted if shopping is made public. Shopping must
-remain behind Cloud Run IAM. The existing wallet-signed AP2 IntentMandate path
-remains the stronger proof for browser/human delegation; OAuth attribution is
-a separate authenticated agent-client path and does not weaken it.
+The internal `X-Relay-Authenticated-Wallet` header binds settlement ownership
+only; it cannot choose or override the already-submitted payment source. It is
+not accepted as an MCP header or tool argument, and shopping must remain behind
+Cloud Run IAM. A signed A2A human IntentMandate similarly requires `delegator`
+to equal `signer_wallet`.
 
 ### Service API key
 

@@ -6,12 +6,14 @@ one Phantom SPL Token `Approve`; later Solana Pay transfers are signed by the
 buyer agent as delegate and debit the signed-in user's USDC ATA. Shopify remains
 only the final order ledger.
 
-The human-present web path and human-absent agent path intentionally differ:
+Payer selection follows the verified principal:
 
 - **Web:** Clerk login → one Approve with an on-chain limit → zero-click
   purchases from the user's wallet → optional Revoke.
-- **MCP/A2A/CLI:** no Clerk or browser; the configured buyer-agent wallet pays
-  autonomously exactly as before.
+- **MCP OAuth / signed human A2A:** the verified user's delegated wallet pays;
+  missing allowance returns a storefront approval URL and never falls back.
+- **MCP API key / CLI / rehearsal:** no human principal; the configured
+  buyer-agent wallet pays autonomously exactly as before.
 
 ## 1. Allow the storefront origin
 

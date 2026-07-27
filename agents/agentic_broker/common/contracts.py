@@ -188,6 +188,18 @@ class DelegationTransaction(BaseModel):
     lastValidBlockHeight: int = Field(gt=0)
 
 
+class DelegationApprovalRequired(BaseModel):
+    """Fail-closed response with the user's one-time approval entry point."""
+
+    status: Literal["approval-required"] = "approval-required"
+    reason: str = Field(min_length=1)
+    delegator: str
+    requiredAmount: Money
+    allowanceRemaining: Money
+    balance: Money
+    approvalUrl: str
+
+
 class IntentMandate(BaseModel):
     """AP2 buyer authorization for an autonomous purchase intent."""
 

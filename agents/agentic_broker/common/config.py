@@ -13,6 +13,16 @@ load_dotenv(_REPO_ROOT / ".env")
 load_dotenv(Path.cwd() / ".env", override=False)
 
 
+def _delegation_approval_url() -> str:
+    configured = os.getenv("DELEGATION_APPROVAL_URL", "").strip()
+    if configured:
+        return configured.rstrip("/")
+    domain = os.getenv("SHOPIFY_STORE_DOMAIN", "your-store.myshopify.com").strip()
+    if domain.startswith(("http://", "https://")):
+        return domain.rstrip("/")
+    return f"https://{domain}".rstrip("/")
+
+
 @dataclass(frozen=True)
 class Settings:
     payments_url: str = os.getenv("PAYMENTS_SERVICE_URL", "http://localhost:8081")
@@ -41,6 +51,7 @@ class Settings:
     clerk_issuer: str = os.getenv("CLERK_ISSUER", "").rstrip("/")
     clerk_jwks_url: str = os.getenv("CLERK_JWKS_URL", "")
     clerk_api_url: str = os.getenv("CLERK_API_URL", "https://api.clerk.com").rstrip("/")
+    delegation_approval_url: str = _delegation_approval_url()
 
     markup_pct: float = float(os.getenv("BROKER_MARKUP_PCT", "15"))
     default_budget_usdc: float = float(os.getenv("DEFAULT_BUDGET_USDC", "5"))

@@ -8,6 +8,7 @@ from datetime import datetime, timedelta, timezone
 from decimal import Decimal, InvalidOperation, ROUND_HALF_UP
 import logging
 from typing import Any
+from urllib.parse import parse_qsl, urlencode, urlsplit, urlunsplit
 from uuid import uuid4
 
 from ..common import service_clients
@@ -18,6 +19,7 @@ from ..common.contracts import (
     PAYMENT_MANDATE_DATA_KEY,
     CatalogProductsResponse,
     CartMandate,
+    DelegationApprovalRequired,
     IntentMandate,
 )
 
@@ -26,6 +28,14 @@ _PAYMENT_REQUEST_DATA_KEY = "relay.payment.PaymentRequest"
 _ORDER_CONFIRMATION_DATA_KEY = "relay.payment.OrderConfirmation"
 _SETTLEMENT_REQUEST_DATA_KEY = "relay.payment.SettlementRequest"
 _MERCHANT_NAME = "Relay Shopping Broker"
+
+
+class DelegationApprovalRequiredError(PermissionError):
+    """Authenticated-user refusal that carries an executable approval response."""
+
+    def __init__(self, response: dict[str, Any]) -> None:
+        self.response = response
+        super().__init__(str(response["reason"]))
 
 
 @dataclass(frozen=True)
@@ -54,6 +64,96 @@ def storefront_context(
         yield
     finally:
         _STOREFRONT_CONTEXT.reset(token)
+
+
+def _approval_url(required_amount: Decimal) -> str:
+    """Add a stable approval intent without discarding preview/query parameters."""
+    base = settings.delegation_approval_url
+    parsed = urlsplit(base)
+    query = dict(parse_qsl(parsed.query, keep_blank_values=True))
+    query.update(
+        {
+            "relayAction": "approve",
+            "relayAmount": format(required_amount, "f"),
+        }
+    )
+    return urlunsplit(
+        (
+            parsed.scheme,
+            parsed.netloc,
+            parsed.path or "/",
+            urlencode(query),
+            parsed.fragment,
+        )
+    )
+
+
+def delegation_approval_response(
+    delegator: str,
+    required_amount: str | float | Decimal,
+    *,
+    reason: str,
+    status: dict[str, Any] | None = None,
+) -> dict[str, Any]:
+    """Build the canonical retry response from current on-chain state."""
+    required = Decimal(str(required_amount))
+    current = status or service_clients.payments_delegation_status(delegator)
+    if current.get("delegator") != delegator:
+        raise PermissionError("Delegation identity did not match the verified wallet.")
+    return DelegationApprovalRequired(
+        reason=reason,
+        delegator=delegator,
+        requiredAmount={
+            "amount": format(required, "f"),
+            "currency": "USDC",
+        },
+        allowanceRemaining=current["allowanceRemaining"],
+        balance=current["balance"],
+        approvalUrl=_approval_url(required),
+    ).model_dump()
+
+
+def require_live_delegation(
+    delegator: str,
+    required_amount: str | float | Decimal,
+) -> dict[str, Any]:
+    """Return live allowance or raise a fail-closed, actionable refusal."""
+    try:
+        required = Decimal(str(required_amount))
+    except InvalidOperation as exc:
+        raise ValueError("required delegation amount must be decimal") from exc
+    if required <= 0:
+        raise ValueError("required delegation amount must be positive")
+
+    status = service_clients.payments_delegation_status(delegator)
+    if status.get("delegator") != delegator:
+        raise PermissionError("Delegation identity did not match the verified wallet.")
+
+    allowance = Decimal(str(status["allowanceRemaining"]["amount"]))
+    balance = Decimal(str(status["balance"]["amount"]))
+    if status.get("active") and allowance >= required and balance >= required:
+        return status
+
+    if not status.get("active"):
+        reason = "SPL delegation is missing or revoked; approve the broker once."
+    elif allowance < required:
+        reason = (
+            f"SPL delegated allowance {allowance} USDC is below the required "
+            f"{required} USDC; approve a higher limit."
+        )
+    else:
+        reason = (
+            f"The authenticated wallet has {balance} USDC but this purchase "
+            f"requires {required} USDC; fund it before approval."
+        )
+
+    response = delegation_approval_response(
+        delegator,
+        required,
+        reason=reason,
+        status=status,
+    )
+    raise DelegationApprovalRequiredError(response)
 
 
 def _storefront_intent(
@@ -203,26 +303,46 @@ def request_quote(
     budget: float,
     ship_to: str,
     delegated_intent: IntentMandate | None = None,
+    *,
+    delegator: str | None = None,
 ) -> dict[str, Any]:
     """Ask the shopping agent (A2A) for a product + agent-native payment request.
 
     Returns the PaymentRequest dict.
     """
     if delegated_intent is None:
-        unsigned_intent = _storefront_intent(query, budget, ship_to) or {
-            "user_cart_confirmation_required": False,
-            "natural_language_description": query,
-            "requires_refundability": False,
-            "price_ceiling": {"amount": f"{budget:.2f}", "currency": "USDC"},
-            "ship_to": ship_to,
-            "intent_expiry": (
-                datetime.now(timezone.utc) + timedelta(minutes=15)
-            ).isoformat(),
-        }
+        unsigned_intent = _storefront_intent(query, budget, ship_to)
+        if unsigned_intent is None:
+            unsigned_intent = {
+                "user_cart_confirmation_required": False,
+                "natural_language_description": query,
+                "requires_refundability": False,
+                "price_ceiling": {"amount": f"{budget:.2f}", "currency": "USDC"},
+                "ship_to": ship_to,
+                "intent_expiry": (
+                    datetime.now(timezone.utc) + timedelta(minutes=15)
+                ).isoformat(),
+            }
+            if delegator:
+                # Quoting is non-spending, so do not reject a usable item merely
+                # because the caller's budget ceiling exceeds its allowance.
+                # The exact quoted amount is enforced immediately before /pay.
+                status = service_clients.payments_delegation_status(delegator)
+                if status.get("delegator") != delegator:
+                    raise PermissionError(
+                        "Delegation identity did not match the verified wallet."
+                    )
+                unsigned_intent.update(
+                    {
+                        "delegator": delegator,
+                        "delegateAuthority": status["delegateAuthority"],
+                        "allowanceRemaining": status["allowanceRemaining"],
+                    }
+                )
         intent_mandate = _signed_mandate(unsigned_intent, "buyer")
     else:
         # This signature was produced once by the authenticated human wallet.
-        # PaymentMandate and the Solana transfer still use the agent wallet.
+        # The verified caller wallet is threaded separately to the transfer.
         intent_mandate = delegated_intent.model_dump(exclude_none=True)
         _LOG.info(
             "[ap2] using delegated IntentMandate signer=human publicKey=%s",
@@ -259,18 +379,35 @@ def authorize_payment(
     amount: str,
     reference: str,
     mandates: dict[str, Any] | None = None,
+    *,
+    delegator: str | None = None,
 ) -> dict[str, Any]:
     """Autonomously sign & send the USDC payment — NO human approval (PRD §7 DoD).
 
     Returns {"txSignature", "explorer"}.
     """
     if not mandates:
-        return service_clients.payments_pay(pay_to, amount, reference)
+        if delegator:
+            require_live_delegation(delegator, amount)
+        return service_clients.payments_pay(
+            pay_to,
+            amount,
+            reference,
+            delegator=delegator,
+        )
 
     intent = mandates[INTENT_MANDATE_DATA_KEY]
     cart = mandates[CART_MANDATE_DATA_KEY]
+    mandate_delegator = intent.get("delegator")
+    if delegator and mandate_delegator and delegator != mandate_delegator:
+        raise PermissionError(
+            "AP2 delegator does not match the server-verified payer wallet."
+        )
+    effective_delegator = delegator or mandate_delegator
+    if delegator:
+        require_live_delegation(delegator, amount)
     wallets = service_clients.payments_wallets()
-    payer_wallet = intent.get("delegator") or wallets["buyer"]
+    payer_wallet = effective_delegator or wallets["buyer"]
     unsigned_payment = {
         "payment_mandate_contents": {
             "payment_mandate_id": f"pm_{uuid4()}",
@@ -295,7 +432,7 @@ def authorize_payment(
         pay_to,
         amount,
         reference,
-        delegator=intent.get("delegator"),
+        delegator=effective_delegator,
     )
     return {
         **payment,

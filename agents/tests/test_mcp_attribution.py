@@ -128,6 +128,96 @@ def test_service_principal_keeps_agent_wallet_fallback(monkeypatch) -> None:
     assert captured["identity_wallet"] is None
 
 
+def test_oauth_quote_and_payment_use_verified_wallet_as_delegator(
+    monkeypatch,
+) -> None:
+    calls: list[tuple[str, str | None]] = []
+
+    def fake_quote(*_args, delegator=None):
+        calls.append(("quote", delegator))
+        return {"reference": "reference"}
+
+    def fake_pay(*_args, delegator=None):
+        calls.append(("pay", delegator))
+        return {"txSignature": "signature"}
+
+    monkeypatch.setattr(server.buyer_tools, "request_quote", fake_quote)
+    monkeypatch.setattr(server.buyer_tools, "authorize_payment", fake_pay)
+    context_token = auth._caller.set(
+        auth.Caller(kind="oauth", oauth=_identity())
+    )
+    try:
+        server.request_quote("earbuds", 5, "Seoul")
+        server.authorize_payment("merchant", "1.00", "reference")
+    finally:
+        auth._caller.reset(context_token)
+
+    assert calls == [("quote", USER_WALLET), ("pay", USER_WALLET)]
+
+
+def test_oauth_missing_delegation_returns_link_without_agent_fallback(
+    monkeypatch,
+) -> None:
+    status = {
+        "active": False,
+        "delegator": USER_WALLET,
+        "delegateAuthority": "agent-wallet",
+        "allowanceRemaining": {"amount": "0", "currency": "USDC"},
+        "balance": {"amount": "3", "currency": "USDC"},
+        "sourceTokenAccount": "source-account",
+        "usdcMint": "mint",
+        "network": "solana-devnet",
+    }
+    monkeypatch.setattr(
+        service_clients,
+        "payments_delegation_status",
+        lambda _: status,
+    )
+
+    def unexpected_pay(*_args, **_kwargs):
+        raise AssertionError("authenticated refusal must not use the agent wallet")
+
+    monkeypatch.setattr(service_clients, "payments_pay", unexpected_pay)
+    context_token = auth._caller.set(
+        auth.Caller(kind="oauth", oauth=_identity())
+    )
+    try:
+        result = server.authorize_payment(
+            "merchant",
+            "1.00",
+            "reference",
+        )
+    finally:
+        auth._caller.reset(context_token)
+
+    assert result["status"] == "approval-required"
+    assert result["delegator"] == USER_WALLET
+    assert result["requiredAmount"] == {
+        "amount": "1.00",
+        "currency": "USDC",
+    }
+    assert result["approvalUrl"].startswith("https://")
+    assert "relayAction=approve" in result["approvalUrl"]
+    assert "relayAmount=1.00" in result["approvalUrl"]
+
+
+def test_service_principal_payment_omits_delegator(monkeypatch) -> None:
+    captured: dict[str, object] = {}
+
+    def fake_pay(*_args, delegator=None):
+        captured["delegator"] = delegator
+        return {"txSignature": "signature"}
+
+    monkeypatch.setattr(server.buyer_tools, "authorize_payment", fake_pay)
+    context_token = auth._caller.set(auth.Caller(kind="service"))
+    try:
+        server.authorize_payment("merchant", "1.00", "reference")
+    finally:
+        auth._caller.reset(context_token)
+
+    assert captured["delegator"] is None
+
+
 def test_oauth_order_reads_are_scoped_to_verified_wallet(monkeypatch) -> None:
     monkeypatch.setattr(
         service_clients,
@@ -299,3 +389,26 @@ def test_private_shopping_header_controls_attribution_only(monkeypatch) -> None:
     assert attributed.status_code == 200
     assert legacy.status_code == 200
     assert calls == [USER_WALLET, None]
+
+
+def test_a2a_human_delegator_must_match_signed_wallet() -> None:
+    intent = {
+        "user_cart_confirmation_required": False,
+        "natural_language_description": "earbuds",
+        "requires_refundability": False,
+        "price_ceiling": {"amount": "5.00", "currency": "USDC"},
+        "ship_to": "Seoul",
+        "intent_expiry": "2099-01-01T00:00:00Z",
+        "signer_wallet": USER_WALLET,
+        "delegator": ATTACKER_WALLET,
+        "signature": "signed",
+    }
+    try:
+        shopping_server._handle_intent(
+            {"kind": "message", "messageId": "message"},
+            {"ap2.mandates.IntentMandate": intent},
+        )
+    except ValueError as exc:
+        assert "delegator does not match" in str(exc)
+    else:
+        raise AssertionError("A2A must reject a mismatched human delegator")

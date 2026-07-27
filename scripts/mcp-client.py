@@ -80,6 +80,15 @@ def _print_step(step: str, result: dict[str, Any], attempt: int = 1) -> None:
     )
 
 
+def _require_delegation_ready(result: dict[str, Any]) -> None:
+    if result.get("status") != "approval-required":
+        return
+    raise RuntimeError(
+        f"{result.get('reason', 'wallet approval required')} "
+        f"Open {result.get('approvalUrl')} and retry."
+    )
+
+
 async def _run(args: argparse.Namespace) -> None:
     if bool(args.api_key) == bool(args.oauth_token):
         raise SystemExit(
@@ -144,6 +153,7 @@ async def _run(args: argparse.Namespace) -> None:
                     )
                 )
                 _print_step("request_quote", quote)
+                _require_delegation_ready(quote)
                 payment = _structured(
                     await session.call_tool(
                         "authorize_payment",
@@ -155,6 +165,7 @@ async def _run(args: argparse.Namespace) -> None:
                     )
                 )
                 _print_step("authorize_payment", payment)
+                _require_delegation_ready(payment)
 
                 confirmation: dict[str, Any] = {}
                 for attempt in range(1, 7):

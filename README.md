@@ -196,8 +196,12 @@ for autonomous agents:
 7. **My orders** queries Shopify orders whose `buyer_wallet` custom attribute
    matches the signed-in identity wallet.
 
-The existing `POST /buy`, CLI, A2A, and MCP-style autonomous paths require no
-Clerk session and retain the configured agent payment wallet behavior.
+Payer choice follows identity rather than transport: verified web sessions,
+MCP OAuth users, and signed human A2A intents spend from that user's delegated
+USDC ATA. MCP API-key service principals, CLI/rehearsal calls, and legacy
+requests with no human principal retain the configured agent payment wallet.
+Authenticated users never silently fall back to agent funds; missing or
+insufficient delegation returns an approval URL.
 
 Shopify OIDC requires an email claim with `email_verified: true`. The demo Clerk
 user therefore has both a Solana Web3 wallet and a verified email; wallet-only
@@ -214,10 +218,10 @@ checkout.
 This maps to PRD §5, steps 5–8 (the judging core):
 
 1. **Buyer → Shopping** A2A JSON-RPC `POST /a2a` `message/send` — sends an
-   `IntentMandate` as an A2A DataPart. On the web path it records the
-   Clerk-verified `delegator`, agent `delegateAuthority`, on-chain allowance
-   snapshot, and approval transaction signature; the buyer agent signs this
-   attestation. The agent-only path omits those fields. The
+   `IntentMandate` as an A2A DataPart. Authenticated web/MCP/A2A paths record
+   the verified `delegator`, agent `delegateAuthority`, and on-chain allowance
+   snapshot; browser approval also records the approval transaction signature.
+   The principal-free path omits those fields. The
    original `POST /a2a/quote` route remains available for REST compatibility.
 2. **Shopping** queries live Shopify variants, removes out-of-stock and
    marked-up-over-budget candidates, then uses Gemini (or deterministic
