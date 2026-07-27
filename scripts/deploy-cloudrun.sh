@@ -114,6 +114,23 @@ grant_secret_access relay-clerk-secret-key "$BUYER_SA"
 grant_secret_access relay-clerk-secret-key "$MCP_SA"
 grant_secret_access relay-mcp-api-key "$MCP_SA"
 
+# DSers OAuth rotates its refresh token on every use. The shopping service
+# needs metadata update + addVersion permission on this one secret (not
+# project-wide) so it can claim an ETag lease and atomically advance the active
+# alias. The path stays optional and never gates the existing catalog.
+if [[ -n "${DSERS_SECRET_ID:-}" ]]; then
+  if ! gcloud secrets describe "$DSERS_SECRET_ID" \
+    --project "${DSERS_SECRET_PROJECT_ID:-$PROJECT_ID}" >/dev/null 2>&1; then
+    echo "Missing DSers OAuth secret ${DSERS_SECRET_ID}; run scripts/bootstrap-dsers-oauth.py." >&2
+    exit 2
+  fi
+  gcloud secrets add-iam-policy-binding "$DSERS_SECRET_ID" \
+    --project "${DSERS_SECRET_PROJECT_ID:-$PROJECT_ID}" \
+    --member "serviceAccount:${SHOPPING_SA}" \
+    --role roles/secretmanager.admin \
+    --quiet >/dev/null
+fi
+
 COMMON_ENV=(
   "SOLANA_RPC_URL=${SOLANA_RPC_URL}"
   "SOLANA_RPC_URL_FALLBACK=${SOLANA_RPC_URL_FALLBACK:-}"
@@ -245,7 +262,7 @@ grant_invoker commerce "$MCP_SA"
 
 deploy_service \
   shopping "$AGENTS_IMAGE" 8091 "$SHOPPING_SA" private \
-  "SHOPPING_PORT=8091@PAYMENTS_SERVICE_URL=${PAYMENTS_URL}@COMMERCE_SERVICE_URL=${COMMERCE_URL}" \
+  "SHOPPING_PORT=8091@PAYMENTS_SERVICE_URL=${PAYMENTS_URL}@COMMERCE_SERVICE_URL=${COMMERCE_URL}@DSERS_SECRET_PROJECT_ID=${DSERS_SECRET_PROJECT_ID:-$PROJECT_ID}@DSERS_SECRET_ID=${DSERS_SECRET_ID:-}@DSERS_SECRET_ALIAS=${DSERS_SECRET_ALIAS:-relay-active}@DSERS_TARGET_STORE=${DSERS_TARGET_STORE:-}@DSERS_SHIP_TO=${DSERS_SHIP_TO:-US}@DSERS_SHIP_FROM=${DSERS_SHIP_FROM:-CN}@DSERS_MAX_IMPORTS_PER_REQUEST=${DSERS_MAX_IMPORTS_PER_REQUEST:-1}" \
   "GOOGLE_API_KEY=relay-google-api-key:latest"
 SHOPPING_URL="$(
   gcloud run services describe shopping \

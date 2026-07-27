@@ -8,6 +8,10 @@ import {
 import { config } from "./config.js";
 import { listProducts } from "./catalog.js";
 import {
+  markAutonomousSourcedProduct,
+  resolveShopifyProductByHandle,
+} from "./sourcing.js";
+import {
   OrderLifecycleConflictError,
   OrderNotFoundError,
   createPaidOrder,
@@ -46,6 +50,55 @@ app.get(
   asyncH(async (req, res) => {
     const input = ProductQuerySchema.parse(req.query);
     res.json({ products: await listProducts(input.query, input.limit) });
+  }),
+);
+
+const ProductHandleSchema = z.object({
+  handle: z
+    .string()
+    .min(1)
+    .max(255)
+    .regex(/^[a-z0-9]+(?:-[a-z0-9]+)*$/),
+});
+
+app.get(
+  "/products/by-handle/:handle",
+  asyncH(async (req, res) => {
+    const { handle } = ProductHandleSchema.parse(req.params);
+    res.json(await resolveShopifyProductByHandle(handle));
+  }),
+);
+
+const SourcingMetadataSchema = z.object({
+  productId: z.string().regex(/^gid:\/\/shopify\/Product\/\d+$/),
+  vendor: z.literal("Relay DSers Autonomous"),
+  tags: z
+    .array(z.string().min(1))
+    .min(2)
+    .max(20),
+  importItemId: z.string().min(1),
+  sourceUrl: z.string().url().startsWith("https://"),
+  supplierProductId: z.string().min(1),
+  dsersProductId: z.string().min(1),
+  capturedAt: z.string().regex(/^\d{4}-\d{2}-\d{2}$/),
+  shipTo: z.string().regex(/^[A-Z]{2}$/),
+  variants: z
+    .array(
+      z.object({
+        sku: z.string().min(1),
+        cost: z.string().regex(/^\d+(\.\d{1,6})?$/),
+        supplierInventory: z.number().int().nonnegative(),
+      }),
+    )
+    .min(1)
+    .max(100),
+});
+
+app.post(
+  "/products/sourcing-metadata",
+  asyncH(async (req, res) => {
+    const input = SourcingMetadataSchema.parse(req.body);
+    res.json(await markAutonomousSourcedProduct(input));
   }),
 );
 

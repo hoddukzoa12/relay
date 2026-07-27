@@ -180,8 +180,10 @@ class ConversationService:
         payment = trace.last_result("authorize_payment")
         confirmation = trace.last_result("confirm_settlement")
         order = trace.last_result("get_order_status")
-        display_products = search.get("products") or search.get(
-            "closestOverBudget", []
+        display_products = (
+            search.get("products")
+            or search.get("fallbackCatalog")
+            or search.get("closestOverBudget", [])
         )
         response: dict[str, Any] = {
             "sessionId": session_id,
@@ -301,6 +303,12 @@ class ConversationService:
                 f"I found {len(products)} in-stock catalog "
                 f"{'match' if len(products) == 1 else 'matches'} within budget."
             )
+        sourcing = search.get("externalSourcing", {})
+        if sourcing.get("status") == "unavailable":
+            return (
+                "I could not source a new matching product right now. "
+                "The existing catalog and autonomous USDC checkout remain available."
+            )
         return "The AI model is temporarily unavailable. No funds were sent."
 
     def _fallback_response(
@@ -415,7 +423,11 @@ class ConversationService:
         budget = self._budget(message) or state.budget
         search = buyer_tools.search_catalog(message, budget)
         products = search.get("products", [])
-        display_products = products or search.get("closestOverBudget", [])
+        display_products = (
+            products
+            or search.get("fallbackCatalog")
+            or search.get("closestOverBudget", [])
+        )
         state.query = message
         state.budget = budget
         state.products = products
@@ -425,6 +437,12 @@ class ConversationService:
                 f"I found {len(products)} in-stock catalog "
                 f"{'match' if len(products) == 1 else 'matches'} within your "
                 f"{budget:.2f} USDC cap. Choose one or delegate the choice."
+            )
+        elif search.get("externalSourcing", {}).get("status") == "unavailable":
+            reply = (
+                "I could not source a new matching product from DSers right "
+                "now. The existing catalog shown below and autonomous USDC "
+                "checkout remain available; no funds were sent."
             )
         else:
             reply = (

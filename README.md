@@ -123,6 +123,12 @@ The committed values are a dated DSers MCP snapshot, not a live quote.
 > account to charge roughly USD 2–4.70 **for every paid purchase** that has a
 > complete structured address. Enabling it requires explicit human review.
 
+For autonomous "not in catalog" sourcing, bootstrap DSers OAuth once and store
+its rotating grant in Secret Manager; see
+[`docs/DSERS-SOURCING.md`](docs/DSERS-SOURCING.md). DSers remains optional:
+authentication or supplier-tool failure never disables the existing catalog or
+Solana Pay checkout.
+
 > **USDC mint:** `.env` defaults to Circle's devnet USDC
 > (`4zMMC9srt5Ri5X14GAgXhaHii3GnPAEERYPJgZJDncDU`). Make sure it matches the token
 > you airdropped, or the transfer will move the wrong asset.
