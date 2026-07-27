@@ -30,7 +30,7 @@ const baseProduct = {
   title: "Smart Watch",
   description: "A watch",
   vendor: "DSers",
-  status: "ACTIVE",
+  status: "DRAFT",
   tags: ["supplier"],
   variants: {
     nodes: [
@@ -57,6 +57,7 @@ test("marks exact product/variant identities and verifies readback", async () =>
       const product = structuredClone(baseProduct);
       if (readback) {
         product.vendor = "Relay DSers Autonomous";
+        product.status = "ACTIVE";
         product.tags.push("relay:autonomous-sourced", "relay:dsers");
         product.variants.nodes[0]!.metafields.nodes = [
           {
@@ -161,6 +162,10 @@ test("marks exact product/variant identities and verifies readback", async () =>
   assert.deepEqual(
     (update!.variables.product as Record<string, unknown>).tags,
     ["supplier", "relay:autonomous-sourced", "relay:dsers"],
+  );
+  assert.equal(
+    (update!.variables.product as Record<string, unknown>).status,
+    "ACTIVE",
   );
   assert.ok(
     calls.every(

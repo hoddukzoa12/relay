@@ -1,9 +1,10 @@
 import demoCatalog from "./demo-catalog.json" with { type: "json" };
 import type { CatalogProduct, SupplierCostSnapshot } from "@arb/shared";
 import { config } from "./config.js";
+import { reconcileCompletedCatalogLifecycle } from "./catalog-lifecycle.js";
+import { shopifyGraphQL } from "./shopify-admin.js";
 import {
   requireShopifyUsdcParityCurrency,
-  shopifyGraphQL,
 } from "./shopify.js";
 
 export interface ShopifyCatalogData {
@@ -85,6 +86,53 @@ const CATALOG_PRODUCTS = /* GraphQL */ `
 `;
 
 let liveCatalogCache: CatalogProduct[] = [];
+const RECENT_SOURCING_TTL_MS = 60_000;
+const recentlySourcedProducts = new Map<
+  string,
+  { product: CatalogProduct; expiresAt: number }
+>();
+
+/**
+ * Bridge Shopify's post-mutation indexing window so a just-sourced product is
+ * immediately visible through the same catalog endpoint used by every agent.
+ */
+export function rememberRecentlySourcedProduct(
+  product: CatalogProduct,
+  now = Date.now(),
+): void {
+  recentlySourcedProducts.set(product.productId, {
+    product,
+    expiresAt: now + RECENT_SOURCING_TTL_MS,
+  });
+}
+
+export function forgetCatalogProduct(productId: string): void {
+  recentlySourcedProducts.delete(productId);
+  liveCatalogCache = liveCatalogCache.filter(
+    (product) => product.productId !== productId,
+  );
+}
+
+export function mergeRecentlySourcedProducts(
+  products: CatalogProduct[],
+  now = Date.now(),
+): CatalogProduct[] {
+  const merged = new Map(
+    products.map((product) => [product.productId, product]),
+  );
+  for (const [productId, pending] of recentlySourcedProducts) {
+    if (pending.expiresAt <= now) {
+      recentlySourcedProducts.delete(productId);
+    } else if (merged.has(productId)) {
+      // The authoritative catalog query now sees the write, so the bridge is
+      // no longer needed.
+      recentlySourcedProducts.delete(productId);
+    } else {
+      merged.set(productId, pending.product);
+    }
+  }
+  return [...merged.values()];
+}
 
 function normalize(value: string): string[] {
   return value
@@ -255,7 +303,24 @@ export async function listProducts(
   await requireShopifyUsdcParityCurrency();
 
   try {
-    const products = await fetchLiveCatalog();
+    try {
+      const lifecycle = await reconcileCompletedCatalogLifecycle();
+      for (const result of lifecycle) {
+        if (
+          result.action === "retired" ||
+          result.action === "already_unlisted"
+        ) {
+          forgetCatalogProduct(result.productId);
+        }
+      }
+    } catch (error) {
+      // Do not let an order-history read outage replace the catalog's existing
+      // last-known-good behavior. A later search or order lookup retries.
+      console.warn(
+        `[commerce] catalog lifecycle reconciliation deferred: ${String(error)}`,
+      );
+    }
+    const products = mergeRecentlySourcedProducts(await fetchLiveCatalog());
     liveCatalogCache = products;
     return rankAndLimit(products, query, limit);
   } catch (error) {

@@ -495,17 +495,20 @@ def _my_products(
     return client.call_tool("dsers_my_products", arguments)
 
 
-def _active_source_record(
+def _reusable_source_record(
     payload: dict[str, Any], source_url: str
 ) -> dict[str, Any] | None:
     record = _exact_source_record(payload, source_url)
     if not record:
         return None
     status = str(_field(record, "status") or "").casefold()
-    return None if status in {"deleted", "offselling"} else record
+    # A fulfilled Relay listing is intentionally DRAFT/offselling in Shopify.
+    # Current preview economics and inventory are revalidated before this
+    # record is reused, then commerce republishes the exact product GID.
+    return None if status == "deleted" else record
 
 
-def _active_product_by_source(
+def _reusable_product_by_source(
     client: DSersMCPClient,
     store_id: str,
     source_url: str,
@@ -514,7 +517,7 @@ def _active_product_by_source(
     seen: set[str] = set()
     for _page in range(20):
         payload = _my_products(client, store_id, cursor)
-        record = _active_source_record(payload, source_url)
+        record = _reusable_source_record(payload, source_url)
         if record:
             return record
         next_cursor = str(payload.get("next_cursor") or "")
@@ -632,7 +635,7 @@ def dsers_store_push(
     preview = dsers_product_preview(import_item_id, client=active_client)
     variants = validate_margin(preview, budget)
     store_id, _store = _discover_store(active_client)
-    live_before = _active_product_by_source(
+    live_before = _reusable_product_by_source(
         active_client, store_id, source_url
     )
     push_arguments = {
@@ -661,7 +664,7 @@ def dsers_store_push(
             )
             pushed["confirmation"] = confirmation
     except Exception as exc:  # noqa: BLE001
-        live = _active_product_by_source(
+        live = _reusable_product_by_source(
             active_client, store_id, source_url
         )
         if not live:
@@ -674,7 +677,7 @@ def dsers_store_push(
             "product": live,
         }
 
-    live = _active_product_by_source(active_client, store_id, source_url)
+    live = _reusable_product_by_source(active_client, store_id, source_url)
     result_record = next(
         (
             record
@@ -774,10 +777,11 @@ def source_missing_product(
             for record in candidates
             if _candidate_cost(record) <= max_cost
         ]
-        selected = min(
-            affordable or candidates,
-            key=lambda record: (_candidate_cost(record), _source_url(record)),
-        )
+        # dsers_find_product was explicitly requested with sort=relevance.
+        # Preserve that supplier-ranked order; cost is an eligibility boundary,
+        # not a reason to replace the best match with the cheapest unrelated
+        # item.
+        selected = (affordable or candidates)[0]
         source_url = _source_url(selected)
         imported = dsers_product_import(
             source_url, request, client=active_client
