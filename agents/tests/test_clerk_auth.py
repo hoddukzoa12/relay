@@ -68,6 +68,17 @@ class ClerkAuthTest(unittest.TestCase):
 
     def _verify(self, token: str) -> auth.ClerkIdentity:
         user = {
+            "primary_email_address_id": "email_primary",
+            "email_addresses": [
+                {
+                    "id": "email_secondary",
+                    "email_address": "secondary@example.com",
+                },
+                {
+                    "id": "email_primary",
+                    "email_address": "Verified.User@Example.com",
+                },
+            ],
             "web3_wallets": [
                 {
                     "web3_wallet": "Bn7UDWnm59HtG4zeSS2gF2MWT8bADFDuVaG5Y95HLoFf",
@@ -96,6 +107,24 @@ class ClerkAuthTest(unittest.TestCase):
             identity.wallet_address,
             "Bn7UDWnm59HtG4zeSS2gF2MWT8bADFDuVaG5Y95HLoFf",
         )
+        self.assertEqual(identity.email, "verified.user@example.com")
+
+    def test_identity_has_no_email_when_clerk_user_has_none(self) -> None:
+        user = {
+            "web3_wallets": [
+                {
+                    "web3_wallet": (
+                        "Bn7UDWnm59HtG4zeSS2gF2MWT8bADFDuVaG5Y95HLoFf"
+                    ),
+                    "verification": {"strategy": "web3_solana_signature"},
+                }
+            ]
+        }
+
+        with patch.object(auth, "_fetch_clerk_user", return_value=user):
+            identity = auth.resolve_identity("user_test", session_id="sess_test")
+
+        self.assertIsNone(identity.email)
 
     def test_expired_session_is_rejected(self) -> None:
         with self.assertRaisesRegex(

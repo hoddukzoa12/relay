@@ -46,6 +46,7 @@ class StorefrontContext:
 
     identity_wallet: str | None
     approval_tx_signature: str | None
+    identity_email: str | None
 
 
 _STOREFRONT_CONTEXT: ContextVar[StorefrontContext | None] = ContextVar(
@@ -57,10 +58,15 @@ _STOREFRONT_CONTEXT: ContextVar[StorefrontContext | None] = ContextVar(
 def storefront_context(
     identity_wallet: str | None,
     approval_tx_signature: str | None,
+    identity_email: str | None = None,
 ):
     """Mark one call chain as storefront-originated without global state."""
     token = _STOREFRONT_CONTEXT.set(
-        StorefrontContext(identity_wallet, approval_tx_signature)
+        StorefrontContext(
+            identity_wallet,
+            approval_tx_signature,
+            identity_email,
+        )
     )
     try:
         yield
@@ -267,10 +273,23 @@ def search_catalog(
             "price": format(price, ".2f"),
             "currency": "USDC",
         }
-        if price <= ceiling:
-            fallback_catalog.append(candidate)
-        if llm.catalog_relevance(product, query) <= 0:
+        complete_match = llm.catalog_satisfies_query(product, query)
+        relevance = llm.catalog_relevance(product, query)
+        if price <= ceiling and relevance > 0 and not complete_match:
+            fallback_catalog.append(
+                {
+                    **candidate,
+                    "matchStatus": "partial",
+                    "matchMessage": (
+                        "This item matches only part of the request and is shown "
+                        "only because new supplier sourcing did not yield a "
+                        "complete match."
+                    ),
+                }
+            )
+        if not complete_match:
             continue
+        candidate["matchStatus"] = "complete"
         if price <= ceiling:
             within_budget.append(candidate)
         else:
@@ -296,6 +315,7 @@ def search_catalog(
                     and sourced_cost > 0
                     and catalog_price > sourced_cost
                     and sourced_price <= ceiling
+                    and llm.catalog_satisfies_query(sourced, query)
                 ):
                     public_sourced = {
                         key: value
@@ -311,6 +331,7 @@ def search_catalog(
                             "catalogPrice": format(catalog_price, "f"),
                             "price": format(sourced_price, ".2f"),
                             "currency": "USDC",
+                            "matchStatus": "complete",
                         }
                     ]
                     external_sourcing = {
@@ -318,6 +339,17 @@ def search_catalog(
                         "provider": "dsers",
                         "productId": sourced["productId"],
                         "importItemId": external_sourcing.get("importItemId"),
+                    }
+                else:
+                    external_sourcing = {
+                        "status": "unsuitable",
+                        "provider": "dsers",
+                        "message": (
+                            "Supplier sourcing returned an item that did not "
+                            "satisfy every query term or the safe price and "
+                            "inventory checks. It was not presented as a match."
+                        ),
+                        "productId": sourced.get("productId"),
                     }
         except Exception as exc:  # noqa: BLE001
             _LOG.warning(
@@ -549,6 +581,9 @@ def confirm_settlement(
     reference: str,
     tx_signature: str,
     mandates: dict[str, Any] | None = None,
+    *,
+    human_customer: bool = False,
+    customer_email: str | None = None,
 ) -> dict[str, Any]:
     """Hand the payment proof to the shopping agent (A2A) and get the order back.
 
@@ -559,13 +594,24 @@ def confirm_settlement(
         "reference": reference,
         "txSignature": tx_signature,
     }
+    context = _STOREFRONT_CONTEXT.get()
+    if context and context.identity_wallet:
+        human_customer = True
+        if customer_email is None:
+            customer_email = context.identity_email
     if not mandates or PAYMENT_MANDATE_DATA_KEY not in mandates:
-        return service_clients.a2a_settle(settlement)
+        return service_clients.a2a_settle(
+            settlement,
+            human_customer=human_customer,
+            customer_email=customer_email,
+        )
 
     task = service_clients.a2a_message_send(
         {
             PAYMENT_MANDATE_DATA_KEY: mandates[PAYMENT_MANDATE_DATA_KEY],
             _SETTLEMENT_REQUEST_DATA_KEY: settlement,
-        }
+        },
+        human_customer=human_customer,
+        customer_email=customer_email,
     )
     return _task_data(task)[_ORDER_CONFIRMATION_DATA_KEY]

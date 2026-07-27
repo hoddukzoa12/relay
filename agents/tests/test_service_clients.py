@@ -47,7 +47,9 @@ def test_cloud_run_service_url_gets_audience_bound_bearer(monkeypatch) -> None:
     assert headers["Authorization"].startswith("Bearer eyJ")
 
 
-def test_a2a_settle_forwards_only_explicit_internal_wallet(monkeypatch) -> None:
+def test_a2a_settle_forwards_only_server_owned_customer_context(
+    monkeypatch,
+) -> None:
     calls: list[dict[str, str] | None] = []
 
     def fake_post(_url, _payload, *, extra_headers=None):
@@ -57,11 +59,18 @@ def test_a2a_settle_forwards_only_explicit_internal_wallet(monkeypatch) -> None:
     monkeypatch.setattr(service_clients, "_post", fake_post)
 
     service_clients.a2a_settle(
-        {"orderRef": "ord_user"}, identity_wallet="verified-wallet"
+        {"orderRef": "ord_user"},
+        identity_wallet="verified-wallet",
+        human_customer=True,
+        customer_email="verified@example.com",
     )
     service_clients.a2a_settle({"orderRef": "ord_agent"})
 
     assert calls == [
-        {"X-Relay-Authenticated-Wallet": "verified-wallet"},
+        {
+            "X-Relay-Authenticated-Wallet": "verified-wallet",
+            "X-Relay-Human-Customer": "true",
+            "X-Relay-Authenticated-Customer-Email": "verified@example.com",
+        },
         None,
     ]

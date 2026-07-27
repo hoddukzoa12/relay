@@ -1,5 +1,6 @@
 import { createHash } from "node:crypto";
 import type {
+  CustomerAssociation,
   FulfillmentResult,
   OrderStatus,
   StructuredShippingAddress,
@@ -33,6 +34,8 @@ export interface OrderInput {
   explorer: string;
   supplierCost?: SupplierCostSnapshot | null;
   shippingAddress?: StructuredShippingAddress | null;
+  /** Undefined for agent paths; null for a human Clerk identity without email. */
+  customerEmail?: string | null;
 }
 
 export interface OrderResult {
@@ -40,6 +43,7 @@ export interface OrderResult {
   name: string;
   mocked: boolean;
   supplierOrder: SupplierOrder;
+  customerAssociation?: CustomerAssociation;
 }
 
 export class OrderNotFoundError extends Error {}
@@ -232,6 +236,14 @@ const ORDER_MARK_AS_PAID = /* GraphQL */ `
   }
 `;
 
+const FIND_CUSTOMER_BY_EMAIL = /* GraphQL */ `
+  query FindCustomerByEmail($query: String!) {
+    customers(first: 10, query: $query) {
+      nodes { id email }
+    }
+  }
+`;
+
 const ORDER_FIELDS = /* GraphQL */ `
   id
   name
@@ -365,6 +377,12 @@ interface OrderMarkAsPaidData {
   };
 }
 
+interface FindCustomerByEmailData {
+  customers: {
+    nodes: { id: string; email: string | null }[];
+  };
+}
+
 interface FindOrderData {
   orders: {
     nodes: ShopifyOrder[];
@@ -469,7 +487,104 @@ async function findOrderByRef(orderRef: string): Promise<ShopifyOrder | null> {
   return findOrder(orderRef, { required: false });
 }
 
-async function createOrder(input: OrderInput): Promise<ShopifyOrder> {
+type ShopifyGraphql = <T>(
+  query: string,
+  variables: Record<string, unknown>,
+) => Promise<T>;
+
+export async function findShopifyCustomerIdByEmail(
+  email: string,
+  graphql: ShopifyGraphql = shopifyGraphQL,
+): Promise<string | null> {
+  const normalized = email.trim().toLowerCase();
+  const data = await graphql<FindCustomerByEmailData>(FIND_CUSTOMER_BY_EMAIL, {
+    query: `email:${JSON.stringify(normalized)}`,
+  });
+  return (
+    data.customers.nodes.find(
+      (customer) => customer.email?.trim().toLowerCase() === normalized,
+    )?.id ?? null
+  );
+}
+
+interface ResolvedCustomerAssociation {
+  customerId: string | null;
+  association?: CustomerAssociation;
+}
+
+export async function resolveShopifyCustomerAssociation(
+  input: Pick<OrderInput, "orderRef" | "customerEmail">,
+  graphql: ShopifyGraphql = shopifyGraphQL,
+): Promise<ResolvedCustomerAssociation> {
+  if (input.customerEmail === undefined) {
+    return { customerId: null };
+  }
+  if (!input.customerEmail) {
+    const message =
+      "The verified Clerk identity had no email; the paid order was recorded without a Shopify customer association.";
+    console.warn(
+      `[commerce] orderRef=${input.orderRef} customer association skipped: verified Clerk email unavailable`,
+    );
+    return {
+      customerId: null,
+      association: { status: "unlinked", customerId: null, message },
+    };
+  }
+  try {
+    const customerId = await findShopifyCustomerIdByEmail(
+      input.customerEmail,
+      graphql,
+    );
+    if (!customerId) {
+      const message =
+        "No Shopify customer matched the verified Clerk email; the paid order was recorded without a customer association.";
+      console.warn(
+        `[commerce] orderRef=${input.orderRef} customer association skipped: no exact Shopify customer match`,
+      );
+      return {
+        customerId: null,
+        association: { status: "unlinked", customerId: null, message },
+      };
+    }
+    return {
+      customerId,
+      association: {
+        status: "linked",
+        customerId,
+        message:
+          "The order was linked to the Shopify customer matching the server-verified Clerk email.",
+      },
+    };
+  } catch (error) {
+    const message =
+      "Shopify customer lookup failed; the paid order was recorded without a customer association.";
+    console.warn(
+      `[commerce] orderRef=${input.orderRef} customer lookup failed; continuing without association:`,
+      error,
+    );
+    return {
+      customerId: null,
+      association: { status: "unlinked", customerId: null, message },
+    };
+  }
+}
+
+function isCustomerAssociationError(
+  errors: { field: string[] | null; message: string }[],
+): boolean {
+  return errors.some(
+    (error) =>
+      error.field?.some((field) => field.toLowerCase().includes("customer")) ===
+        true || error.message.toLowerCase().includes("customer"),
+  );
+}
+
+interface CreatedOrder {
+  order: ShopifyOrder;
+  customerAssociation?: CustomerAssociation;
+}
+
+async function createOrder(input: OrderInput): Promise<CreatedOrder> {
   // Re-read immediately before the irreversible order write. The catalog path
   // also validates currency before a quote, but this closes the window if an
   // administrator changes the store currency while a quote is in flight.
@@ -481,24 +596,64 @@ async function createOrder(input: OrderInput): Promise<ShopifyOrder> {
     console.log(
       `[commerce] reusing Shopify order ${existing.id} for ${input.orderRef}`,
     );
-    return existing;
+    return {
+      order: existing,
+    };
   }
 
-  const created = await shopifyGraphQL<OrderCreateData>(ORDER_CREATE, {
-    order: buildShopifyOrderInput(input, storeCurrency),
+  let resolved = await resolveShopifyCustomerAssociation(input);
+  let created = await shopifyGraphQL<OrderCreateData>(ORDER_CREATE, {
+    order: buildShopifyOrderInput(
+      input,
+      storeCurrency,
+      config.supplierFulfillmentEnabled,
+      resolved.customerId,
+    ),
   });
+
+  if (
+    resolved.customerId &&
+    created.orderCreate.userErrors.length > 0 &&
+    isCustomerAssociationError(created.orderCreate.userErrors)
+  ) {
+    console.warn(
+      `[commerce] orderRef=${input.orderRef} Shopify rejected customer association; retrying order creation without customerId`,
+    );
+    resolved = {
+      customerId: null,
+      association: {
+        status: "unlinked",
+        customerId: null,
+        message:
+          "Shopify rejected the customer association; the paid order was recorded without it.",
+      },
+    };
+    created = await shopifyGraphQL<OrderCreateData>(ORDER_CREATE, {
+      order: buildShopifyOrderInput(
+        input,
+        storeCurrency,
+        config.supplierFulfillmentEnabled,
+      ),
+    });
+  }
 
   const errors = created.orderCreate.userErrors;
   if (errors.length || !created.orderCreate.order) {
     throw new Error(`orderCreate failed: ${JSON.stringify(errors)}`);
   }
-  return created.orderCreate.order;
+  return {
+    order: created.orderCreate.order,
+    ...(resolved.association
+      ? { customerAssociation: resolved.association }
+      : {}),
+  };
 }
 
 export function buildShopifyOrderInput(
   input: OrderInput,
   storeCurrency: string,
   supplierFulfillmentEnabled = config.supplierFulfillmentEnabled,
+  customerId: string | null = null,
 ): Record<string, unknown> {
   const currency = requireUsdcParityCurrency(storeCurrency);
   const variantId = input.variantId ?? input.productId;
@@ -526,6 +681,7 @@ export function buildShopifyOrderInput(
     : input.shipTo;
   return {
     currency,
+    ...(customerId ? { customerId } : {}),
     ...(shippingAddress ? { shippingAddress } : {}),
     lineItems: [
       {
@@ -676,21 +832,34 @@ async function createPaidOrderOnce(input: OrderInput): Promise<OrderResult> {
     console.log(
       `[commerce] MOCK order for ${input.orderRef} (tx=${input.txSignature.slice(0, 12)}…)`,
     );
+    const customerAssociation =
+      input.customerEmail !== undefined
+        ? {
+            status: "unlinked" as const,
+            customerId: null,
+            message:
+              "Mock commerce mode does not create Shopify customer associations.",
+          }
+        : undefined;
     return {
       shopifyOrderId: `gid://shopify/Order/${n}`,
       name: `#${n}`,
       mocked: true,
       supplierOrder,
+      ...(customerAssociation ? { customerAssociation } : {}),
     };
   }
 
-  const order = await createOrder(input);
-  await markOrderPaid(order);
+  const created = await createOrder(input);
+  await markOrderPaid(created.order);
   return {
-    shopifyOrderId: order.id,
-    name: order.name,
+    shopifyOrderId: created.order.id,
+    name: created.order.name,
     mocked: false,
     supplierOrder,
+    ...(created.customerAssociation
+      ? { customerAssociation: created.customerAssociation }
+      : {}),
   };
 }
 

@@ -21,6 +21,7 @@ class ClerkIdentity:
     user_id: str
     session_id: str
     wallet_address: str
+    email: str | None = None
 
 
 @lru_cache(maxsize=1)
@@ -78,6 +79,33 @@ def _solana_wallet(user: dict[str, Any]) -> str:
     raise AuthenticationError("Clerk user has no verified Solana wallet")
 
 
+def _clerk_email(user: dict[str, Any]) -> str | None:
+    """Read the primary email from the server-fetched Clerk user record."""
+    addresses = user.get("email_addresses")
+    if not isinstance(addresses, list):
+        return None
+    usable = [
+        address
+        for address in addresses
+        if isinstance(address, dict)
+        and isinstance(address.get("email_address"), str)
+        and address["email_address"].strip()
+    ]
+    if not usable:
+        return None
+    primary_id = user.get("primary_email_address_id")
+    primary = next(
+        (
+            address
+            for address in usable
+            if isinstance(primary_id, str)
+            and address.get("id") == primary_id
+        ),
+        usable[0],
+    )
+    return str(primary["email_address"]).strip().lower()
+
+
 def verify_token_claims(
     token: str, *, required_claims: tuple[str, ...]
 ) -> dict[str, Any]:
@@ -117,6 +145,7 @@ def resolve_identity(user_id: str, *, session_id: str = "") -> ClerkIdentity:
         user_id=user_id,
         session_id=session_id,
         wallet_address=_solana_wallet(user),
+        email=_clerk_email(user),
     )
 
 

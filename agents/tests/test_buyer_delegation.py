@@ -103,7 +103,12 @@ class BuyerDelegationTest(unittest.TestCase):
 
     def test_authenticated_buy_without_mandate_uses_session_wallet(self) -> None:
         wallet = "Bn7UDWnm59HtG4zeSS2gF2MWT8bADFDuVaG5Y95HLoFf"
-        identity = auth.ClerkIdentity("user_test", "sess_test", wallet)
+        identity = auth.ClerkIdentity(
+            "user_test",
+            "sess_test",
+            wallet,
+            "verified@example.com",
+        )
         result = {"ok": True, "confirmation": {"status": "paid"}}
         with (
             patch.object(server.auth, "verify_session_token", return_value=identity),
@@ -112,15 +117,31 @@ class BuyerDelegationTest(unittest.TestCase):
             response = self.client.post(
                 "/buy",
                 headers={"Authorization": "Bearer clerk-session"},
-                json={"query": "earbuds", "budget": 5, "shipTo": "Seoul"},
+                json={
+                    "query": "earbuds",
+                    "budget": 5,
+                    "shipTo": "Seoul",
+                    "customerEmail": "attacker@example.com",
+                    "customerId": "gid://shopify/Customer/attacker",
+                },
             )
 
         self.assertEqual(response.status_code, 200)
         self.assertEqual(buy.call_args.kwargs["identity_wallet"], wallet)
+        self.assertEqual(
+            buy.call_args.kwargs["identity_email"],
+            "verified@example.com",
+        )
+        self.assertTrue(buy.call_args.kwargs["human_customer"])
 
     def test_authenticated_intent_cannot_select_another_delegator(self) -> None:
         wallet = "Bn7UDWnm59HtG4zeSS2gF2MWT8bADFDuVaG5Y95HLoFf"
-        identity = auth.ClerkIdentity("user_test", "sess_test", wallet)
+        identity = auth.ClerkIdentity(
+            "user_test",
+            "sess_test",
+            wallet,
+            "verified@example.com",
+        )
         mandate = {
             "user_cart_confirmation_required": False,
             "natural_language_description": "earbuds",
@@ -190,14 +211,22 @@ class BuyerDelegationTest(unittest.TestCase):
 
     def test_web_purchase_context_uses_only_the_clerk_wallet(self) -> None:
         wallet = "Bn7UDWnm59HtG4zeSS2gF2MWT8bADFDuVaG5Y95HLoFf"
-        identity = auth.ClerkIdentity("user_test", "sess_test", wallet)
+        identity = auth.ClerkIdentity(
+            "user_test",
+            "sess_test",
+            wallet,
+            "verified@example.com",
+        )
 
         def delegated_buy(**kwargs):
             context = tools._STOREFRONT_CONTEXT.get()
             self.assertIsNotNone(context)
             self.assertEqual(context.identity_wallet, wallet)
             self.assertEqual(context.approval_tx_signature, "approve-tx")
+            self.assertEqual(context.identity_email, "verified@example.com")
             self.assertEqual(kwargs["identity_wallet"], wallet)
+            self.assertEqual(kwargs["identity_email"], "verified@example.com")
+            self.assertTrue(kwargs["human_customer"])
             return {"ok": True}
 
         with (

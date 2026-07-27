@@ -147,6 +147,14 @@ export const SupplierOrderSchema = z.object({
 });
 export type SupplierOrder = z.infer<typeof SupplierOrderSchema>;
 
+/** Result of associating an authenticated human with the Shopify order. */
+export const CustomerAssociationSchema = z.object({
+  status: z.enum(["linked", "unlinked"]),
+  customerId: z.string().min(1).nullable(),
+  message: z.string().min(1),
+});
+export type CustomerAssociation = z.infer<typeof CustomerAssociationSchema>;
+
 /** Wallet-owned order projection used by the authenticated "my orders" view. */
 export const WalletOrderSchema = z.object({
   shopifyOrderId: z.string(),
@@ -421,6 +429,7 @@ export const OrderConfirmationSchema = z.object({
   explorer: z.string().nullable(),
   shopifyOrderId: z.string().nullable(),
   supplierOrder: SupplierOrderSchema,
+  customerAssociation: CustomerAssociationSchema.optional(),
 });
 export type OrderConfirmation = z.infer<typeof OrderConfirmationSchema>;
 

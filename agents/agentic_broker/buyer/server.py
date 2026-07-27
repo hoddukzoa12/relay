@@ -200,6 +200,7 @@ def chat(
         body.sessionId,
         message,
         identity_wallet=identity.wallet_address if identity else None,
+        identity_email=identity.email if identity else None,
         approval_tx_signature=body.approvalTxSignature,
     )
 
@@ -305,6 +306,8 @@ def buy(
             return flow.buy_from_text(
                 body.text,
                 identity_wallet=identity.wallet_address if identity else None,
+                identity_email=identity.email if identity else None,
+                human_customer=identity is not None,
                 shipping_address=body.shippingAddress,
             )
         except buyer_tools.DelegationApprovalRequiredError as exc:
@@ -371,6 +374,8 @@ def buy(
             ship_to=ship_to,
             intent_mandate=body.intentMandate,
             identity_wallet=identity.wallet_address if identity else None,
+            identity_email=identity.email if identity else None,
+            human_customer=identity is not None,
             shipping_address=body.shippingAddress,
         )
     except buyer_tools.DelegationApprovalRequiredError as exc:
@@ -392,12 +397,16 @@ def web_buy(
 
     try:
         with buyer_tools.storefront_context(
-            identity.wallet_address, body.approvalTxSignature
+            identity.wallet_address,
+            body.approvalTxSignature,
+            identity.email,
         ):
             if body.text:
                 return flow.buy_from_text(
                     body.text,
                     identity_wallet=identity.wallet_address,
+                    identity_email=identity.email,
+                    human_customer=True,
                     shipping_address=body.shippingAddress,
                 )
             return flow.buy(
@@ -409,6 +418,8 @@ def web_buy(
                     else body.shipTo or settings.default_ship_to
                 ),
                 identity_wallet=identity.wallet_address,
+                identity_email=identity.email,
+                human_customer=True,
                 shipping_address=body.shippingAddress,
             )
     except buyer_tools.DelegationApprovalRequiredError as exc:

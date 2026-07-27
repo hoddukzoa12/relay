@@ -18,6 +18,7 @@ import {
   buildShopifyOrderInput,
   createPaidOrder,
   fulfillOrder,
+  findShopifyCustomerIdByEmail,
   getOrderStatus,
   isTemporaryOrderMutationError,
   listOrdersByWallet,
@@ -25,6 +26,7 @@ import {
   markOrderRefunded,
   disabledSupplierOrder,
   orderTag,
+  resolveShopifyCustomerAssociation,
   supplierOrderForInput,
   trackOrder,
   trackingInfoFromFulfillments,
@@ -345,14 +347,21 @@ test("order payload binds the selected variant and SKU and rejects KRW", () => {
     sku: "14:193#black",
     shippingAddress: realFormatShippingAddress,
   };
-  const payload = buildShopifyOrderInput(order, "USD", false) as {
+  const payload = buildShopifyOrderInput(
+    { ...order, customerEmail: "verified@example.com" },
+    "USD",
+    false,
+    "gid://shopify/Customer/123",
+  ) as {
     currency: string;
+    customerId?: string;
     shippingAddress?: Record<string, string>;
     lineItems: { variantId: string; priceSet: { shopMoney: { currencyCode: string } } }[];
     customAttributes: { key: string; value: string }[];
   };
 
   assert.equal(payload.currency, "USD");
+  assert.equal(payload.customerId, "gid://shopify/Customer/123");
   assert.equal(payload.shippingAddress, undefined);
   assert.equal(
     payload.lineItems[0]?.variantId,
@@ -392,6 +401,63 @@ test("order payload binds the selected variant and SKU and rejects KRW", () => {
     () => buildShopifyOrderInput(order, "KRW"),
     /KRW.*not USD.*refusing/i,
   );
+  assert.equal(
+    (
+      buildShopifyOrderInput(order, "USD", false) as {
+        customerId?: string;
+      }
+    ).customerId,
+    undefined,
+  );
+});
+
+test("Shopify customer lookup uses an exact server-provided email match", async () => {
+  const calls: Record<string, unknown>[] = [];
+  const graphql = async <T>(
+    _query: string,
+    variables: Record<string, unknown>,
+  ): Promise<T> => {
+    calls.push(variables);
+    return {
+      customers: {
+        nodes: [
+          {
+            id: "gid://shopify/Customer/other",
+            email: "verified+other@example.com",
+          },
+          {
+            id: "gid://shopify/Customer/123",
+            email: "Verified@Example.com",
+          },
+        ],
+      },
+    } as T;
+  };
+
+  const customerId = await findShopifyCustomerIdByEmail(
+    " VERIFIED@example.com ",
+    graphql,
+  );
+
+  assert.equal(customerId, "gid://shopify/Customer/123");
+  assert.deepEqual(calls, [{ query: 'email:"verified@example.com"' }]);
+});
+
+test("customer lookup failure remains a non-blocking, explicit association result", async () => {
+  const result = await resolveShopifyCustomerAssociation(
+    {
+      orderRef: "ord_customer_lookup_failure",
+      customerEmail: "verified@example.com",
+    },
+    async <T>(): Promise<T> => {
+      throw new Error("read_customers unavailable");
+    },
+  );
+
+  assert.equal(result.customerId, null);
+  assert.equal(result.association?.status, "unlinked");
+  assert.equal(result.association?.customerId, null);
+  assert.match(result.association?.message ?? "", /lookup failed.*recorded/i);
 });
 
 test("shippingAddress is written only when the money gate and complete real fields are present", () => {

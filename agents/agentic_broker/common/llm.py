@@ -62,19 +62,19 @@ _QUERY_STOP_WORDS = {
 }
 
 
-def catalog_relevance(product: dict[str, Any], query: str) -> int:
-    """Return lexical evidence that a real catalog item fits the request.
-
-    A zero score is meaningful: callers use it to decide whether the supplier
-    pool should be consulted instead of pretending an unrelated earbud matches.
-    """
-    tokens = {
+def _catalog_query_tokens(query: str) -> set[str]:
+    return {
         token
         for token in re.findall(r"[a-z0-9]+", query.lower())
         if len(token) > 1
         and token not in _QUERY_STOP_WORDS
         and not token.isdigit()
     }
+
+
+def _catalog_search_fields(
+    product: dict[str, Any],
+) -> tuple[str, str, str, str]:
     title = str(product.get("title", "")).lower()
     sku = str(product.get("sku", "")).lower()
     searchable = " ".join(
@@ -86,7 +86,18 @@ def catalog_relevance(product: dict[str, Any], query: str) -> int:
         ]
     )
     compact_searchable = re.sub(r"[^a-z0-9]+", "", searchable)
-    return sum(
+    return title, sku, searchable, compact_searchable
+
+
+def _token_relevance(
+    token: str,
+    *,
+    title: str,
+    sku: str,
+    searchable: str,
+    compact_searchable: str,
+) -> int:
+    return (
         4
         if token in title
         else 3
@@ -96,6 +107,44 @@ def catalog_relevance(product: dict[str, Any], query: str) -> int:
         else 1
         if token in searchable
         else 0
+    )
+
+
+def catalog_relevance(product: dict[str, Any], query: str) -> int:
+    """Return ranking evidence that a real catalog item fits the request.
+
+    A positive score can be only a partial match. Callers deciding whether the
+    catalog fully satisfies a query must use :func:`catalog_satisfies_query`.
+    """
+    tokens = _catalog_query_tokens(query)
+    title, sku, searchable, compact_searchable = _catalog_search_fields(product)
+    return sum(
+        _token_relevance(
+            token,
+            title=title,
+            sku=sku,
+            searchable=searchable,
+            compact_searchable=compact_searchable,
+        )
+        for token in tokens
+    )
+
+
+def catalog_satisfies_query(product: dict[str, Any], query: str) -> bool:
+    """Return whether every meaningful query token has catalog evidence."""
+    tokens = _catalog_query_tokens(query)
+    if not tokens:
+        return False
+    title, sku, searchable, compact_searchable = _catalog_search_fields(product)
+    return all(
+        _token_relevance(
+            token,
+            title=title,
+            sku=sku,
+            searchable=searchable,
+            compact_searchable=compact_searchable,
+        )
+        > 0
         for token in tokens
     )
 

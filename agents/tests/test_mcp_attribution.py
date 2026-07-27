@@ -355,10 +355,22 @@ def test_oauth_transport_rejects_unauthenticated_calls_with_discovery() -> None:
 
 
 def test_private_shopping_header_controls_attribution_only(monkeypatch) -> None:
-    calls: list[str | None] = []
+    calls: list[dict[str, object]] = []
 
-    def fake_handle_settle(_request, *, identity_wallet=None):
-        calls.append(identity_wallet)
+    def fake_handle_settle(
+        _request,
+        *,
+        identity_wallet=None,
+        human_customer=False,
+        customer_email=None,
+    ):
+        calls.append(
+            {
+                "identity_wallet": identity_wallet,
+                "human_customer": human_customer,
+                "customer_email": customer_email,
+            }
+        )
         return {
             "orderRef": "ord_test",
             "status": "paid",
@@ -379,7 +391,13 @@ def test_private_shopping_header_controls_attribution_only(monkeypatch) -> None:
     try:
         attributed = client.post(
             "/a2a/settle",
-            headers={"X-Relay-Authenticated-Wallet": USER_WALLET},
+            headers={
+                "X-Relay-Authenticated-Wallet": USER_WALLET,
+                "X-Relay-Human-Customer": "true",
+                "X-Relay-Authenticated-Customer-Email": (
+                    "verified@example.com"
+                ),
+            },
             json=payload,
         )
         legacy = client.post("/a2a/settle", json=payload)
@@ -388,7 +406,18 @@ def test_private_shopping_header_controls_attribution_only(monkeypatch) -> None:
 
     assert attributed.status_code == 200
     assert legacy.status_code == 200
-    assert calls == [USER_WALLET, None]
+    assert calls == [
+        {
+            "identity_wallet": USER_WALLET,
+            "human_customer": True,
+            "customer_email": "verified@example.com",
+        },
+        {
+            "identity_wallet": None,
+            "human_customer": False,
+            "customer_email": None,
+        },
+    ]
 
 
 def test_a2a_human_delegator_must_match_signed_wallet() -> None:

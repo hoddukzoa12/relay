@@ -39,6 +39,8 @@ class _OrderState:
     ship_to: str
     shipping_address: StructuredShippingAddress | None = None
     buyer_wallet: str = ""
+    human_customer: bool = False
+    customer_email: str | None = None
     payment_status: Literal["pending", "paid"] = "pending"
     paid_tx_signature: str | None = None
     explorer: str | None = None
@@ -103,7 +105,11 @@ def catalog_identity(order_ref: str) -> dict[str, str]:
 
 
 def handle_settle(
-    req: SettlementRequest, *, identity_wallet: str | None = None
+    req: SettlementRequest,
+    *,
+    identity_wallet: str | None = None,
+    human_customer: bool = False,
+    customer_email: str | None = None,
 ) -> OrderConfirmation:
     """Steps 7–10: verify on-chain, then record the paid Shopify order."""
     with _orders_lock:
@@ -135,6 +141,18 @@ def handle_settle(
             return OrderConfirmation(orderRef=req.orderRef, status="invalid")
         if not order.buyer_wallet:
             order.buyer_wallet = buyer_wallet
+        if (
+            order.human_customer
+            and human_customer
+            and order.customer_email
+            and customer_email
+            and order.customer_email != customer_email
+        ):
+            return OrderConfirmation(orderRef=req.orderRef, status="invalid")
+        if human_customer:
+            order.human_customer = True
+            if customer_email:
+                order.customer_email = customer_email
         if order.confirmation:
             return order.confirmation
 
@@ -209,6 +227,8 @@ def handle_settle(
                 if order.shipping_address
                 else None
             ),
+            human_customer=order.human_customer,
+            customer_email=order.customer_email,
         )
     except Exception as exc:  # noqa: BLE001
         with order.lock:
@@ -225,6 +245,11 @@ def handle_settle(
         if result.get("supplierOrder")
         else {}
     )
+    customer_association = (
+        {"customerAssociation": result["customerAssociation"]}
+        if result.get("customerAssociation")
+        else {}
+    )
     confirmation = OrderConfirmation(
         orderRef=req.orderRef,
         status="paid",
@@ -232,6 +257,7 @@ def handle_settle(
         explorer=order.explorer,
         shopifyOrderId=result.get("shopifyOrderId"),
         **supplier_order,
+        **customer_association,
     )
     with order.lock:
         order.ledger_status = "settled"

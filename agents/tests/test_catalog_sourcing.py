@@ -152,7 +152,113 @@ class CatalogSourcingTest(unittest.TestCase):
             offer = tools.source_and_price("wireless earbuds", 5.00)
 
         self.assertEqual(offer["sku"], "REAL")
+        self.assertEqual(offer["matchStatus"], "complete")
         external.assert_not_called()
+
+    def test_partial_fan_match_triggers_sourcing_for_every_query_token(
+        self,
+    ) -> None:
+        hand_fan = product(
+            "HAND-FAN",
+            "Fan Sandalwood Fan Handle Hand Fan",
+            "1.00",
+            10,
+        )
+        electric_fan = product(
+            "WIRELESS-FAN",
+            "Wireless Rechargeable Mini Electric Fan",
+            "2.00",
+            10,
+        )
+        with (
+            patch.object(
+                tools.service_clients,
+                "commerce_products",
+                return_value={"products": [hand_fan]},
+            ),
+            patch.object(
+                tools.dsers_sourcing,
+                "source_missing_product",
+                return_value={
+                    "productId": electric_fan["productId"],
+                    "metadata": {"product": electric_fan},
+                },
+            ) as external,
+            patch.object(
+                tools.llm,
+                "source_offer",
+                side_effect=lambda _query, _budget, candidates: candidates[0],
+            ),
+        ):
+            offer = tools.source_and_price("wireless fan", 5.00)
+
+        external.assert_called_once_with("wireless fan", 5.00)
+        self.assertEqual(offer["sku"], "WIRELESS-FAN")
+        self.assertEqual(offer["matchStatus"], "complete")
+
+    def test_partial_fan_is_only_an_honest_fallback_when_sourcing_fails(
+        self,
+    ) -> None:
+        hand_fan = product(
+            "HAND-FAN",
+            "Fan Sandalwood Fan Handle Hand Fan",
+            "1.00",
+            10,
+        )
+        with (
+            patch.object(
+                buyer_tools.service_clients,
+                "commerce_products",
+                return_value={"products": [hand_fan]},
+            ),
+            patch.object(
+                buyer_tools.service_clients,
+                "shopping_source_catalog",
+                side_effect=RuntimeError("DSers unavailable"),
+            ) as external,
+        ):
+            result = buyer_tools.search_catalog("wireless fan", 5.00)
+
+        external.assert_called_once_with("wireless fan", 5.00)
+        self.assertEqual(result["products"], [])
+        self.assertEqual(result["externalSourcing"]["status"], "unavailable")
+        self.assertEqual(result["fallbackCatalog"][0]["sku"], "HAND-FAN")
+        self.assertEqual(
+            result["fallbackCatalog"][0]["matchStatus"],
+            "partial",
+        )
+        self.assertIn(
+            "matches only part",
+            result["fallbackCatalog"][0]["matchMessage"],
+        )
+
+    def test_unsuitable_sourced_item_is_not_presented_as_a_match(self) -> None:
+        hand_fan = product(
+            "HAND-FAN",
+            "Fan Sandalwood Fan Handle Hand Fan",
+            "1.00",
+            10,
+        )
+        with (
+            patch.object(
+                buyer_tools.service_clients,
+                "commerce_products",
+                return_value={"products": [hand_fan]},
+            ),
+            patch.object(
+                buyer_tools.service_clients,
+                "shopping_source_catalog",
+                return_value={
+                    "productId": hand_fan["productId"],
+                    "metadata": {"product": hand_fan},
+                },
+            ),
+        ):
+            result = buyer_tools.search_catalog("wireless fan", 5.00)
+
+        self.assertEqual(result["products"], [])
+        self.assertEqual(result["externalSourcing"]["status"], "unsuitable")
+        self.assertEqual(result["fallbackCatalog"][0]["matchStatus"], "partial")
 
     def test_unrelated_catalog_reports_dsers_failure_without_false_match(
         self,
@@ -213,6 +319,28 @@ class CatalogSourcingTest(unittest.TestCase):
                 candidates,
             )
         self.assertEqual(selected["sku"], "BUDS")
+
+    def test_catalog_satisfaction_requires_every_meaningful_query_token(
+        self,
+    ) -> None:
+        hand_fan = product(
+            "HAND-FAN",
+            "Fan Sandalwood Fan Handle Hand Fan",
+            "1.00",
+            10,
+        )
+        electric_fan = product(
+            "WIRELESS-FAN",
+            "Wireless Rechargeable Mini Electric Fan",
+            "2.00",
+            10,
+        )
+
+        self.assertGreater(llm.catalog_relevance(hand_fan, "wireless fan"), 0)
+        self.assertFalse(llm.catalog_satisfies_query(hand_fan, "wireless fan"))
+        self.assertTrue(
+            llm.catalog_satisfies_query(electric_fan, "wireless fan")
+        )
 
     def test_relevance_handles_long_supplier_titles_and_descriptions(self) -> None:
         earbuds = product(

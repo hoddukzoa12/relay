@@ -19,7 +19,8 @@
     "txSignature": { "type": ["string", "null"] },
     "explorer": { "type": ["string", "null"] },
     "shopifyOrderId": { "type": ["string", "null"] },
-    "supplierOrder": { "$ref": "#/$defs/supplierOrder" }
+    "supplierOrder": { "$ref": "#/$defs/supplierOrder" },
+    "customerAssociation": { "$ref": "#/$defs/customerAssociation" }
   },
   "$defs": {
     "supplierOrder": {
@@ -40,6 +41,21 @@
           ]
         },
         "ref": {
+          "oneOf": [
+            { "type": "string", "minLength": 1 },
+            { "type": "null" }
+          ]
+        },
+        "message": { "type": "string", "minLength": 1 }
+      }
+    },
+    "customerAssociation": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["status", "customerId", "message"],
+      "properties": {
+        "status": { "enum": ["linked", "unlinked"] },
+        "customerId": {
           "oneOf": [
             { "type": "string", "minLength": 1 },
             { "type": "null" }

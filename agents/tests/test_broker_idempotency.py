@@ -10,6 +10,7 @@ from agentic_broker.common.contracts import (
     StructuredShippingAddress,
 )
 from agentic_broker.shopping import broker
+from agentic_broker.shopping import tools as shopping_tools
 
 
 class BrokerIdempotencyTest(unittest.TestCase):
@@ -141,6 +142,8 @@ class BrokerIdempotencyTest(unittest.TestCase):
             record_order.call_args.kwargs["shipping_address"]["country"],
             "US",
         )
+        self.assertFalse(record_order.call_args.kwargs["human_customer"])
+        self.assertIsNone(record_order.call_args.kwargs["customer_email"])
         self.assertEqual(first.supplierOrder.status, "disabled")
         self.assertIsNone(first.supplierOrder.ref)
 
@@ -215,19 +218,62 @@ class BrokerIdempotencyTest(unittest.TestCase):
             patch.object(
                 broker.tools,
                 "record_order",
-                return_value={"shopifyOrderId": "shopify-order-1"},
+                return_value={
+                    "shopifyOrderId": "shopify-order-1",
+                    "customerAssociation": {
+                        "status": "linked",
+                        "customerId": "gid://shopify/Customer/1",
+                        "message": "Linked from verified Clerk email.",
+                    },
+                },
             ) as record_order,
             patch.object(broker.service_clients, "payments_wallets") as wallets,
         ):
             confirmation = broker.handle_settle(
-                settlement, identity_wallet="human-wallet"
+                settlement,
+                identity_wallet="human-wallet",
+                human_customer=True,
+                customer_email="verified@example.com",
             )
 
         self.assertEqual(confirmation.status, "paid")
         self.assertEqual(
             record_order.call_args.kwargs["buyer_address"], "human-wallet"
         )
+        self.assertTrue(record_order.call_args.kwargs["human_customer"])
+        self.assertEqual(
+            record_order.call_args.kwargs["customer_email"],
+            "verified@example.com",
+        )
+        self.assertEqual(
+            confirmation.customerAssociation.customerId,
+            "gid://shopify/Customer/1",
+        )
         wallets.assert_not_called()
+
+    def test_agent_order_payload_omits_customer_identity(self) -> None:
+        with patch.object(
+            shopping_tools.service_clients,
+            "commerce_create_order",
+            return_value={"shopifyOrderId": "shopify-order-1"},
+        ) as create_order:
+            shopping_tools.record_order(
+                order_ref="ord_agent",
+                product_id="gid://shopify/ProductVariant/1",
+                sku="SKU-1",
+                title="Agent Product",
+                amount="1.00",
+                buyer_address="agent-wallet",
+                ship_to="Seoul",
+                payment_reference="reference",
+                tx_signature="signature",
+                explorer="https://explorer.test/signature",
+            )
+
+        self.assertNotIn(
+            "customerEmail",
+            create_order.call_args.args[0],
+        )
 
     def test_settlement_retry_cannot_change_bound_owner(self) -> None:
         quote = self._quote()

@@ -292,17 +292,23 @@ def a2a_quote(intent: dict[str, Any]) -> dict[str, Any]:
 
 
 def a2a_settle(
-    req: dict[str, Any], *, identity_wallet: Optional[str] = None
+    req: dict[str, Any],
+    *,
+    identity_wallet: Optional[str] = None,
+    human_customer: bool = False,
+    customer_email: Optional[str] = None,
 ) -> dict[str, Any]:
-    headers = (
-        {"X-Relay-Authenticated-Wallet": identity_wallet}
-        if identity_wallet
-        else None
-    )
+    headers: dict[str, str] = {}
+    if identity_wallet:
+        headers["X-Relay-Authenticated-Wallet"] = identity_wallet
+    if human_customer:
+        headers["X-Relay-Human-Customer"] = "true"
+        if customer_email:
+            headers["X-Relay-Authenticated-Customer-Email"] = customer_email
     return _post(
         f"{settings.shopping_agent_url}/a2a/settle",
         req,
-        extra_headers=headers,
+        extra_headers=headers or None,
     )
 
 
@@ -332,7 +338,11 @@ def buyer_wallet_balances() -> dict[str, Any]:
 
 
 def a2a_message_send(
-    data: dict[str, Any], *, context_id: Optional[str] = None
+    data: dict[str, Any],
+    *,
+    context_id: Optional[str] = None,
+    human_customer: bool = False,
+    customer_email: Optional[str] = None,
 ) -> dict[str, Any]:
     """Send one A2A v0.3 JSON-RPC message containing an AP2 DataPart."""
     request_id = str(uuid4())
@@ -345,6 +355,11 @@ def a2a_message_send(
     if context_id:
         message["contextId"] = context_id
 
+    headers: dict[str, str] = {}
+    if human_customer:
+        headers["X-Relay-Human-Customer"] = "true"
+        if customer_email:
+            headers["X-Relay-Authenticated-Customer-Email"] = customer_email
     response = _post(
         f"{settings.shopping_agent_url}/a2a",
         {
@@ -353,6 +368,7 @@ def a2a_message_send(
             "method": "message/send",
             "params": {"message": message},
         },
+        extra_headers=headers or None,
     )
     if "error" in response:
         error = response["error"]
