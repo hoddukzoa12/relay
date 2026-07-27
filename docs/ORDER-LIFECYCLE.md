@@ -8,6 +8,10 @@ buyer → merchant payment → Shopify paid order
                               ├─ incomplete address → supplierOrder:blocked
                               └─ gate ON + complete shippingAddress
                                       → DSers automation → supplierOrder:pending
+                              ↓ real Shopify SUCCESS fulfillment
+                         carrier + tracking number present
+                              ↓ sourced product only
+                     Shopify product ACTIVE → DRAFT
         ↓
       lookup
         ↓
@@ -110,6 +114,25 @@ is labeled `provider: "shopify"` and `demo: false`. Otherwise the tracking
 endpoint returns `409`. The future real source is the waybill DSers synchronizes
 back into Shopify fulfillment; do not reintroduce EasyPost as a synthetic
 substitute.
+
+## Catalog retirement after real fulfillment
+
+Order lookup and catalog search reconcile Shopify's real fulfillment records.
+Relay treats only `fulfillment.status=SUCCESS` plus a non-empty carrier and
+tracking number as the retirement signal. It follows the fulfillment line item
+to an exact Shopify product GID, reads that product, and changes `ACTIVE` to
+`DRAFT` only when the vendor is `Relay DSers Autonomous` or the product carries
+tag `relay:autonomous-sourced`.
+
+There is no deletion path and no title matching. A human-curated product,
+including the original six catalog products, is read but never mutated. A
+missing/failed fulfillment or a fulfillment without real tracking causes no
+product read or write; the existing `supplierOrder` state remains the honest
+explanation of why no downstream delivery was proven.
+
+Drafting preserves the order's product reference and is reversible. A later
+request for the same supplier item revalidates current DSers economics and
+inventory, then republishes the exact non-deleted product as `ACTIVE`.
 
 ## Supplier-cost and margin evidence
 

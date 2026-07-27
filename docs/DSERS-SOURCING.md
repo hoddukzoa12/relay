@@ -100,6 +100,7 @@ local catalog miss
   → dsers_store_push (sell_immediately, force_push=false)
   → exact supplier-URL live-state lookup
   → Shopify product GID + exact SKU provenance/cost write + readback
+  → ACTIVE catalog write-through (immediately searchable)
 ```
 
 Safety properties:
@@ -109,6 +110,8 @@ Safety properties:
 - the default per-request import cap is one;
 - zero-price, below-cost, out-of-budget, or missing-economics previews never
   reach store push;
+- the supplier's explicit relevance ordering is preserved among affordable
+  candidates; price is a safety ceiling, not a cheapest-item reranker;
 - a DSers/CloudFront 504 is reconciled through `dsers_import_list` or
   `dsers_my_products`; Relay never blindly repeats a mutation;
 - no sourcing code calls `dsers_product_delete` or any Shopify deletion;
@@ -117,6 +120,41 @@ Safety properties:
   `relay:dsers`; titles are never identifiers;
 - supplier cost, currency, capture date, route, supplier URL, and DSers IDs are
   written to the Admin-only `relay.*` variant metafields used by issue #52.
+
+## Catalog lifecycle and recovery
+
+Relay's autonomous catalog is a set of products it can source now, not an
+ever-growing archive:
+
+```text
+source → publish → sell → fulfill → unlist
+   ↑                                 │
+   └──── exact supplier request ─────┘
+```
+
+After the provenance/cost readback, commerce marks the exact Shopify product
+`ACTIVE` and places that verified projection in a short write-through window.
+The buyer, shopping agent, A2A, and MCP paths all use the same commerce catalog,
+so the sourced product is searchable immediately even if Shopify's list index
+briefly lags the product mutation.
+
+Before catalog search, Relay reads real Shopify fulfillment records. It drafts
+only a product whose fulfillment has `status=SUCCESS`, a non-empty carrier and
+tracking number, and an exact fulfillment-line-item product GID. The product
+must also have vendor `Relay DSers Autonomous` or tag
+`relay:autonomous-sourced`. Human-curated products never qualify. Unlisting is
+a reversible `status=DRAFT` update; Relay never deletes products or matches
+titles.
+
+`SUPPLIER_FULFILLMENT_ENABLED=false` means there is normally no downstream
+delivery signal. In that case Relay makes no catalog mutation and preserves the
+truthful `supplierOrder.status=disabled` message. A Shopify fulfillment status
+without carrier + tracking number also makes no catalog mutation.
+
+If a drafted sourced product is requested again, current DSers preview margin,
+budget, and stock checks still run. Relay can then reuse the exact non-deleted
+supplier record and product GID, mark it `ACTIVE`, and place it back into the
+catalog without creating a duplicate or losing order history.
 
 ## Failure behavior
 

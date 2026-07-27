@@ -1,5 +1,7 @@
+import type { CatalogProduct, SupplierCostSnapshot } from "@arb/shared";
 import { config } from "./config.js";
-import { shopifyGraphQL } from "./shopify.js";
+import { rememberRecentlySourcedProduct } from "./catalog.js";
+import { shopifyGraphQL } from "./shopify-admin.js";
 
 const PRODUCT_ID = /^gid:\/\/shopify\/Product\/\d+$/;
 const DECIMAL = /^\d+(\.\d{1,6})?$/;
@@ -352,7 +354,7 @@ function chunks<T>(values: T[], size: number): T[][] {
 
 function supplierCost(
   variant: ShopifySourcingVariant,
-): Record<string, string | null> | null {
+): SupplierCostSnapshot | null {
   const values = new Map(
     (variant.metafields?.nodes ?? []).map((field) => [
       field.key,
@@ -364,15 +366,15 @@ function supplierCost(
   if (!amount || source !== "dsers_mcp_snapshot") return null;
   return {
     amount,
-    currency: values.get("supplier_cost_currency") ?? "",
-    source,
+    currency: "USD",
+    source: "dsers_mcp_snapshot",
     capturedAt: values.get("supplier_cost_captured_at") ?? "",
     shipTo: values.get("supplier_cost_ship_to") ?? "",
     supplierUrl: values.get("supplier_url") ?? null,
   };
 }
 
-function projectProduct(product: ShopifySourcingProduct): Record<string, unknown> {
+function projectProduct(product: ShopifySourcingProduct): CatalogProduct {
   const variant = [...product.variants.nodes]
     .filter(
       (item) =>
@@ -522,8 +524,10 @@ export async function markAutonomousSourcedProduct(
       );
     }
   }
+  const product = projectProduct(inspected.product);
+  rememberRecentlySourcedProduct(product);
   return {
-    product: projectProduct(inspected.product),
+    product,
     provenance: {
       vendor: AUTONOMOUS_VENDOR,
       tags: REQUIRED_TAGS,

@@ -29,10 +29,17 @@ def _isolated_target_store(monkeypatch: pytest.MonkeyPatch) -> None:
 
 
 class FakeDSers:
-    def __init__(self, *, import_error: bool = False, push_error: bool = False):
+    def __init__(
+        self,
+        *,
+        import_error: bool = False,
+        push_error: bool = False,
+        offselling: bool = False,
+    ):
         self.calls: list[tuple[str, dict]] = []
         self.import_error = import_error
         self.push_error = push_error
+        self.offselling = offselling
         self.imported = False
         self.pushed = False
 
@@ -107,6 +114,11 @@ class FakeDSers:
                             "shopify_product_id": "1234",
                             "dsers_product_id": "dsers-9",
                             "store_handle": "relay-smart-watch",
+                            **(
+                                {"status": "offselling"}
+                                if self.offselling
+                                else {}
+                            ),
                         }
                     ]
                     if self.pushed
@@ -197,6 +209,53 @@ def test_autonomous_workflow_imports_one_and_binds_exact_product_id() -> None:
     ]
     assert payload["productId"] == "gid://shopify/Product/1234"
     assert payload["variants"][0]["cost"] == "4.00"
+
+
+def test_supplier_relevance_order_wins_over_a_cheaper_later_result() -> None:
+    client = FakeDSers()
+    original_call = client.call_tool
+
+    def relevance_first(name: str, arguments: dict) -> dict:
+        if name == "dsers_find_product":
+            client.calls.append((name, arguments))
+            return {
+                "products": [
+                    {
+                        "title": "Smart Watch",
+                        "import_url": SOURCE_URL,
+                        "cost": "4.00",
+                    },
+                    {
+                        "title": "Unrelated Cheap Item",
+                        "import_url":
+                            "https://www.aliexpress.com/item/1005009999999999.html",
+                        "cost": "1.00",
+                    },
+                ]
+            }
+        return original_call(name, arguments)
+
+    client.call_tool = relevance_first  # type: ignore[method-assign]
+    with patch.object(
+        dsers_sourcing.service_clients,
+        "commerce_mark_sourced_product",
+        side_effect=metadata_response,
+    ), patch.object(
+        dsers_sourcing.service_clients,
+        "commerce_product_by_handle",
+        side_effect=resolved_product,
+    ):
+        result = dsers_sourcing.source_missing_product(
+            "smart watch", 10, client=client
+        )
+
+    imported = next(
+        arguments
+        for name, arguments in client.calls
+        if name == "dsers_product_import"
+    )
+    assert imported["source_url"] == SOURCE_URL
+    assert result["sourceUrl"] == SOURCE_URL
 
 
 def test_ambiguous_import_reads_state_and_never_blindly_retries() -> None:
@@ -330,6 +389,28 @@ def test_existing_exact_source_is_reused_without_another_push() -> None:
         )
 
     assert result["push"]["reused_existing_push"] is True
+    assert "dsers_store_push" not in [name for name, _args in client.calls]
+
+
+def test_fulfilled_offselling_product_is_republished_without_duplication() -> None:
+    client = FakeDSers(offselling=True)
+    client.pushed = True
+    with patch.object(
+        dsers_sourcing.service_clients,
+        "commerce_mark_sourced_product",
+        side_effect=metadata_response,
+    ) as mark, patch.object(
+        dsers_sourcing.service_clients,
+        "commerce_product_by_handle",
+        side_effect=resolved_product,
+    ):
+        result = dsers_sourcing.dsers_store_push(
+            "import-1", SOURCE_URL, Decimal("10"), client=client
+        )
+
+    assert result["push"]["reused_existing_push"] is True
+    assert result["metadata"]["product"]["status"] == "ACTIVE"
+    assert mark.call_args.args[0]["productId"] == "gid://shopify/Product/1234"
     assert "dsers_store_push" not in [name for name, _args in client.calls]
 
 

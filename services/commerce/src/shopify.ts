@@ -9,7 +9,11 @@ import type {
   WalletOrder,
 } from "@arb/shared";
 import { config } from "./config.js";
-import { ShopifyAdminClient } from "./shopify-client.js";
+import {
+  reconcileOrderCatalogLifecycle,
+  type CatalogLifecycleFulfillment,
+} from "./catalog-lifecycle.js";
+import { shopifyGraphQL } from "./shopify-admin.js";
 import {
   ShopifyStoreCurrency,
   requireUsdcParityCurrency,
@@ -40,15 +44,6 @@ export interface OrderResult {
 
 export class OrderNotFoundError extends Error {}
 export class OrderLifecycleConflictError extends Error {}
-
-const shopifyAdmin = new ShopifyAdminClient(config.shopify);
-
-export async function shopifyGraphQL<T>(
-  query: string,
-  variables: Record<string, unknown>,
-): Promise<T> {
-  return shopifyAdmin.graphql<T>(query, variables);
-}
 
 const shopifyStoreCurrency = new ShopifyStoreCurrency(shopifyGraphQL);
 
@@ -252,6 +247,13 @@ const ORDER_FIELDS = /* GraphQL */ `
     id
     status
     trackingInfo(first: 10) { company number url }
+    fulfillmentLineItems(first: 50) {
+      nodes {
+        lineItem {
+          variant { product { id } }
+        }
+      }
+    }
   }
   transactions(first: 50) {
     id
@@ -326,15 +328,7 @@ interface ShopifyLineItem {
   quantity: number;
 }
 
-interface ShopifyFulfillment {
-  id: string;
-  status: string;
-  trackingInfo: {
-    company: string | null;
-    number: string | null;
-    url: string | null;
-  }[];
-}
+interface ShopifyFulfillment extends CatalogLifecycleFulfillment {}
 
 interface ShopifyTransaction {
   id: string;
@@ -882,6 +876,7 @@ function findMockOrder(identifier: string): MockOrderRecord {
 export async function getOrderStatus(identifier: string): Promise<OrderStatus> {
   if (config.mock) return projectMockOrderStatus(findMockOrder(identifier));
   const order = await findOrder(identifier, { required: true });
+  await reconcileOrderCatalogLifecycle(order!);
   return projectOrderStatus(order!);
 }
 
