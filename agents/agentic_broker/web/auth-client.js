@@ -4,6 +4,9 @@
 
   const loadedScripts = new Map();
   const AUTH_RETURN_PARAM = "relay_auth_return";
+  const CLERK_SSO_RETURN_PARAM = "relay_clerk_sso_return";
+  const CLERK_SSO_ATTEMPT_PARAM = "relay_clerk_sso_attempt";
+  const CLERK_SSO_MAX_REDIRECTS = 2;
   const AUTH_RETURN_TTL_MS = 30 * 60 * 1000;
   const AUTH_TELEMETRY_LIMIT = 40;
 
@@ -169,6 +172,10 @@
       this.authBranch = "initializing";
       this.authBranchSource = "initial";
       this.fallbackActive = false;
+      this.fallbackAttempts = 0;
+      this.fallbackRetrying = false;
+      this.fallbackExhausted = false;
+      this.fallbackMessage = "";
       this.listeners = new Set();
       this.ready = this.initialize();
     }
@@ -185,6 +192,7 @@
         return this.status(false);
       }
       const returnedFromShopify = this.consumeShopifyReturn();
+      const fallbackReturn = this.consumeFallbackReturn();
       const domain = frontendDomain(config.publishableKey);
       await loadScript(`https://${domain}/npm/@clerk/ui@1/dist/ui.browser.js`);
       await loadScript(
@@ -200,8 +208,9 @@
         this.refreshIdentity({ notify: false })
           .then(() => {
             if (this.sessionActive && !previousSessionActive && this.fallbackActive) {
-              this.fallbackActive = false;
-              this.setAuthBranch("clerk_session_active", "in_page_fallback");
+              this.clearFallbackAttempts();
+              this.resetFallbackState();
+              this.setAuthBranch("clerk_session_active", "clerk_sso_listener");
             } else if (!this.sessionActive && previousSessionActive) {
               this.setAuthBranch("shopify_login_required", "session_ended");
             } else {
@@ -215,13 +224,48 @@
       });
       await this.refreshIdentity({ notify: false });
       if (this.sessionActive) {
+        this.clearFallbackAttempts();
+        this.resetFallbackState();
         this.setAuthBranch(
           "clerk_session_active",
-          returnedFromShopify ? "shopify_return" : "initial",
+          fallbackReturn.returned
+            ? "clerk_sso_return"
+            : returnedFromShopify
+              ? "shopify_return"
+              : "initial",
         );
       } else if (returnedFromShopify) {
+        this.clearFallbackAttempts();
+        this.resetFallbackState();
         this.fallbackActive = true;
         this.setAuthBranch("shopify_return_fallback", "shopify_return");
+      } else if (fallbackReturn.returned && fallbackReturn.attempts < CLERK_SSO_MAX_REDIRECTS) {
+        this.fallbackActive = true;
+        this.fallbackAttempts = fallbackReturn.attempts;
+        this.fallbackRetrying = true;
+        this.recordAuthEvent("clerk_sso_return_without_session", "clerk_sso_return");
+        this.setAuthBranch("shopify_return_fallback", "clerk_sso_retry");
+        window.setTimeout(() => {
+          this.openFallbackSignIn({ retry: true }).catch((error) => {
+            if (!this.fallbackExhausted) {
+              this.stopFallback(
+                `Clerk SSO could not retry: ${error?.message || "unknown error"}`,
+                "clerk_sso_retry_error",
+                "clerk_sso_redirect_error",
+              );
+            }
+          });
+        }, 0);
+      } else if (
+        fallbackReturn.returned ||
+        fallbackReturn.attempts >= CLERK_SSO_MAX_REDIRECTS
+      ) {
+        this.fallbackAttempts = fallbackReturn.attempts;
+        this.stopFallback(
+          "Clerk SSO returned twice without exposing a storefront session. Automatic redirects stopped.",
+          "clerk_sso_retry_exhausted",
+          "clerk_sso_retry_exhausted",
+        );
       } else {
         this.setAuthBranch("shopify_login_required", "initial");
       }
@@ -233,7 +277,14 @@
         configured,
         branch: this.authBranch,
         source: this.authBranchSource,
-        fallbackRequired: this.authBranch === "shopify_return_fallback",
+        fallbackRequired:
+          this.authBranch === "shopify_return_fallback" &&
+          !this.fallbackRetrying &&
+          !this.fallbackExhausted,
+        fallbackRetrying: this.fallbackRetrying,
+        fallbackExhausted: this.fallbackExhausted,
+        fallbackAttemptCount: this.fallbackAttempts,
+        fallbackMessage: this.fallbackMessage,
         sessionActive: this.sessionActive,
         walletVerified: Boolean(this.identity?.walletAddress),
       };
@@ -243,8 +294,96 @@
       return `relay:shopify-auth-return:v1:${this.baseUrl}`;
     }
 
+    fallbackAttemptKey() {
+      return `relay:clerk-sso-attempt:v1:${this.baseUrl}`;
+    }
+
     telemetryKey() {
       return `relay:auth-telemetry:v1:${this.baseUrl}`;
+    }
+
+    readFallbackAttempts() {
+      try {
+        const raw = window.sessionStorage.getItem(this.fallbackAttemptKey());
+        const marker = raw ? JSON.parse(raw) : null;
+        if (
+          Number.isInteger(marker?.attempts) &&
+          marker.attempts >= 0 &&
+          Number.isFinite(marker?.startedAt) &&
+          Date.now() - marker.startedAt <= AUTH_RETURN_TTL_MS
+        ) {
+          return marker.attempts;
+        }
+        window.sessionStorage.removeItem(this.fallbackAttemptKey());
+      } catch {}
+      return 0;
+    }
+
+    saveFallbackAttempts(attempts) {
+      this.fallbackAttempts = attempts;
+      try {
+        window.sessionStorage.setItem(
+          this.fallbackAttemptKey(),
+          JSON.stringify({ attempts, startedAt: Date.now() }),
+        );
+      } catch {}
+    }
+
+    clearFallbackAttempts() {
+      this.fallbackAttempts = 0;
+      try {
+        window.sessionStorage.removeItem(this.fallbackAttemptKey());
+      } catch {}
+    }
+
+    resetFallbackState() {
+      this.fallbackActive = false;
+      this.fallbackRetrying = false;
+      this.fallbackExhausted = false;
+      this.fallbackMessage = "";
+    }
+
+    stopFallback(message, source, event) {
+      this.fallbackActive = true;
+      this.fallbackRetrying = false;
+      this.fallbackExhausted = true;
+      this.fallbackMessage = message;
+      this.recordAuthEvent(event, source);
+      this.setAuthBranch("shopify_return_fallback", source);
+    }
+
+    fallbackReturnUrl(attempts) {
+      const current = new URL(window.location.href);
+      current.searchParams.delete(AUTH_RETURN_PARAM);
+      current.searchParams.set(CLERK_SSO_RETURN_PARAM, "1");
+      current.searchParams.set(CLERK_SSO_ATTEMPT_PARAM, String(attempts));
+      return current.href;
+    }
+
+    consumeFallbackReturn() {
+      const current = new URL(window.location.href);
+      const returned = current.searchParams.get(CLERK_SSO_RETURN_PARAM) === "1";
+      const queryAttempts = Number.parseInt(
+        current.searchParams.get(CLERK_SSO_ATTEMPT_PARAM) || "0",
+        10,
+      );
+      const attempts = Math.max(
+        this.readFallbackAttempts(),
+        Number.isInteger(queryAttempts) && queryAttempts >= 0 ? queryAttempts : 0,
+      );
+      this.fallbackAttempts = attempts;
+      if (returned) {
+        try {
+          current.searchParams.delete(CLERK_SSO_RETURN_PARAM);
+          current.searchParams.delete(CLERK_SSO_ATTEMPT_PARAM);
+          window.history.replaceState(
+            window.history.state,
+            "",
+            `${current.pathname}${current.search}${current.hash}`,
+          );
+        } catch {}
+      }
+      return { returned, attempts };
     }
 
     saveShopifyReturnMarker() {
@@ -381,23 +520,78 @@
       if (!status.configured) throw new Error("Clerk is not configured.");
       if (!this.sessionActive) await this.refreshIdentity();
       if (this.sessionActive) {
+        this.clearFallbackAttempts();
+        this.resetFallbackState();
         this.setAuthBranch("clerk_session_active", "pre_redirect_recheck");
         return false;
       }
+      this.clearFallbackAttempts();
+      this.resetFallbackState();
       this.saveShopifyReturnMarker();
       this.recordAuthEvent("shopify_login_redirect", "shopify");
       window.location.assign(shopifySignInUrl(configuredUrl));
       return true;
     }
 
-    async openFallbackSignIn() {
+    async openFallbackSignIn({ retry = false } = {}) {
       const status = await this.ready;
       if (!status.configured) throw new Error("Clerk is not configured.");
       if (!this.sessionActive) await this.refreshIdentity();
-      if (this.sessionActive) return this.identity;
+      if (this.sessionActive) {
+        this.clearFallbackAttempts();
+        this.resetFallbackState();
+        this.setAuthBranch("clerk_session_active", "pre_sso_redirect_recheck");
+        return this.identity;
+      }
+      const previousAttempts = Math.max(
+        this.fallbackAttempts,
+        this.readFallbackAttempts(),
+      );
+      if (previousAttempts >= CLERK_SSO_MAX_REDIRECTS) {
+        const message =
+          "Clerk SSO returned twice without exposing a storefront session. Automatic redirects stopped.";
+        this.stopFallback(
+          message,
+          "clerk_sso_retry_exhausted",
+          "clerk_sso_retry_exhausted",
+        );
+        throw new Error(message);
+      }
+      if (typeof this.clerk?.redirectToSignIn !== "function") {
+        const message = "Clerk redirect sign-in is unavailable in this browser.";
+        this.stopFallback(
+          message,
+          "clerk_sso_redirect_unavailable",
+          "clerk_sso_redirect_error",
+        );
+        throw new Error(message);
+      }
+      const nextAttempt = previousAttempts + 1;
       this.fallbackActive = true;
-      this.recordAuthEvent("clerk_fallback_opened", "shopify_return");
-      this.clerk.openSignIn();
+      this.fallbackRetrying = true;
+      this.fallbackExhausted = false;
+      this.fallbackMessage = "";
+      this.saveFallbackAttempts(nextAttempt);
+      const source = retry ? "clerk_sso_retry" : "shopify_return";
+      this.recordAuthEvent(
+        retry ? "clerk_sso_retry_redirect" : "clerk_sso_redirect",
+        source,
+      );
+      this.emit();
+      try {
+        await this.clerk.redirectToSignIn({
+          redirectUrl: this.fallbackReturnUrl(nextAttempt),
+        });
+      } catch (error) {
+        if (previousAttempts > 0) this.saveFallbackAttempts(previousAttempts);
+        else this.clearFallbackAttempts();
+        this.stopFallback(
+          `Clerk SSO redirect failed: ${error?.message || "unknown error"}`,
+          "clerk_sso_redirect_error",
+          "clerk_sso_redirect_error",
+        );
+        throw error;
+      }
       return null;
     }
 

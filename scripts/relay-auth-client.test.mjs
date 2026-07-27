@@ -29,14 +29,16 @@ function storage(initial = {}) {
 
 function harness({
   backendIdentity = true,
+  localStore = storage(),
   session = false,
+  sessionStore = storage(),
   url = "https://shop.test/",
 } = {}) {
   const events = [];
   const assigned = [];
+  const redirects = [];
   const replaced = [];
-  const sessionStorage = storage();
-  const localStorage = storage();
+  const scheduled = [];
   const listeners = [];
   const locationUrl = new URL(url);
   const clerk = {
@@ -57,6 +59,9 @@ function harness({
     },
     openSignIn() {
       this.opened += 1;
+    },
+    async redirectToSignIn(options) {
+      redirects.push(options);
     },
     async signOut() {},
   };
@@ -127,10 +132,13 @@ function harness({
           replaced.push(replacement);
         },
       },
-      localStorage,
+      localStorage: localStore,
       location,
-      sessionStorage,
-      setTimeout,
+      sessionStorage: sessionStore,
+      setTimeout(callback, _milliseconds, ...args) {
+        scheduled.push(() => callback(...args));
+        return scheduled.length;
+      },
     },
   };
   vm.runInNewContext(source, context);
@@ -139,9 +147,15 @@ function harness({
     clerk,
     client: context.window.RelayAuth.client("https://buyer.test"),
     events,
-    localStorage,
+    localStorage: localStore,
+    redirects,
     replaced,
-    sessionStorage,
+    async runScheduled() {
+      while (scheduled.length) await scheduled.shift()();
+      await Promise.resolve();
+    },
+    scheduled,
+    sessionStorage: sessionStore,
   };
 }
 
@@ -194,11 +208,12 @@ test("sends an anonymous buyer through Shopify and preserves preview state", asy
   );
 });
 
-test("opens the in-page fallback when Shopify returns without a Clerk session", async () => {
+test("redirects to Clerk SSO when Shopify returns without a Clerk session", async () => {
   const {
     clerk,
     client,
     events,
+    redirects,
     replaced,
   } = harness({
     url: "https://shop.test/?preview_theme_id=204473499934&relay_auth_return=1",
@@ -210,11 +225,89 @@ test("opens the in-page fallback when Shopify returns without a Clerk session", 
   assert.equal(replaced[0], "/?preview_theme_id=204473499934");
 
   await client.openFallbackSignIn();
-  assert.equal(clerk.opened, 1);
+  assert.equal(clerk.opened, 0);
+  assert.equal(redirects.length, 1);
+  const redirect = new URL(redirects[0].redirectUrl);
+  assert.equal(redirect.origin, "https://shop.test");
+  assert.equal(redirect.searchParams.get("preview_theme_id"), "204473499934");
+  assert.equal(redirect.searchParams.get("relay_clerk_sso_return"), "1");
+  assert.equal(redirect.searchParams.get("relay_clerk_sso_attempt"), "1");
   assert.deepEqual(
     events.slice(-2).map(({ event }) => event),
-    ["shopify_return_fallback", "clerk_fallback_opened"],
+    ["shopify_return_fallback", "clerk_sso_redirect"],
   );
+});
+
+test("retries Clerk SSO once, then stops redirects and exposes a failure state", async () => {
+  const sessionStore = storage();
+  const first = harness({
+    sessionStore,
+    url: "https://shop.test/?preview_theme_id=204473499934&relay_auth_return=1",
+  });
+  await first.client.ready;
+  await first.client.openFallbackSignIn();
+
+  const retry = harness({
+    sessionStore,
+    url: "https://shop.test/?preview_theme_id=204473499934&relay_clerk_sso_return=1&relay_clerk_sso_attempt=1",
+  });
+  const retryStatus = await retry.client.ready;
+  assert.equal(retryStatus.fallbackRequired, false);
+  assert.equal(retryStatus.fallbackRetrying, true);
+  assert.equal(retryStatus.fallbackAttemptCount, 1);
+  assert.equal(retry.scheduled.length, 1);
+
+  await retry.runScheduled();
+  assert.equal(retry.clerk.opened, 0);
+  assert.equal(retry.redirects.length, 1);
+  const retryRedirect = new URL(retry.redirects[0].redirectUrl);
+  assert.equal(retryRedirect.searchParams.get("relay_clerk_sso_attempt"), "2");
+  assert.ok(
+    retry.events.some(({ event }) => event === "clerk_sso_return_without_session"),
+  );
+  assert.ok(
+    retry.events.some(({ event }) => event === "clerk_sso_retry_redirect"),
+  );
+
+  const exhausted = harness({
+    sessionStore,
+    url: "https://shop.test/?preview_theme_id=204473499934&relay_clerk_sso_return=1&relay_clerk_sso_attempt=2",
+  });
+  const exhaustedStatus = await exhausted.client.ready;
+  assert.equal(exhaustedStatus.branch, "shopify_return_fallback");
+  assert.equal(exhaustedStatus.source, "clerk_sso_retry_exhausted");
+  assert.equal(exhaustedStatus.fallbackRequired, false);
+  assert.equal(exhaustedStatus.fallbackRetrying, false);
+  assert.equal(exhaustedStatus.fallbackExhausted, true);
+  assert.equal(exhaustedStatus.fallbackAttemptCount, 2);
+  assert.match(exhaustedStatus.fallbackMessage, /Automatic redirects stopped/);
+  assert.equal(exhausted.scheduled.length, 0);
+  assert.equal(exhausted.redirects.length, 0);
+  assert.ok(
+    exhausted.events.some(({ event }) => event === "clerk_sso_retry_exhausted"),
+  );
+});
+
+test("accepts the Clerk session returned by redirect SSO and clears its loop guard", async () => {
+  const sessionStore = storage({
+    "relay:clerk-sso-attempt:v1:https://buyer.test": JSON.stringify({
+      attempts: 1,
+      startedAt: Date.now(),
+    }),
+  });
+  const { client, events } = harness({
+    session: true,
+    sessionStore,
+    url: "https://shop.test/?relay_clerk_sso_return=1&relay_clerk_sso_attempt=1",
+  });
+  const status = await client.ready;
+
+  assert.deepEqual(
+    { branch: status.branch, source: status.source },
+    { branch: "clerk_session_active", source: "clerk_sso_return" },
+  );
+  assert.equal(sessionStore.getItem(client.fallbackAttemptKey()), null);
+  assert.equal(events.at(-1).source, "clerk_sso_return");
 });
 
 test("recognizes a Clerk session exposed after the Shopify round trip", async () => {
@@ -242,11 +335,19 @@ test("keeps anonymous search public while blocking storefront payment", () => {
   );
   assert.match(
     storefront,
-    /await this\.requirePurchaseDelegation\(\);/,
+    /await this\.requirePurchaseDelegation\(product,\s*\{/,
   );
   assert.match(
     storefront,
-    /Sign in through Shopify before buying\. Catalog search and comparison remain available\./,
+    /Search and comparison stay available without an account\./,
+  );
+  assert.match(
+    storefront,
+    /showAuthFailureGate\(product, options = \{\}, status = \{\}\)/,
+  );
+  assert.match(
+    storefront,
+    /Automatic redirects have stopped\./,
   );
   assert.doesNotMatch(storefront, />Wallet sign-in</);
 });
