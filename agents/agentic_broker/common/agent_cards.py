@@ -36,7 +36,7 @@ def shopping_agent_card() -> dict[str, Any]:
                     "request (CartMandate)."
                 ),
                 "tags": ["commerce", "payments"],
-                "examples": ["Buy wireless earbuds under 25 USDC"],
+                "examples": ["Buy wireless earbuds under 5 USDC"],
             },
             {
                 "id": "settle",
@@ -75,7 +75,7 @@ def buyer_agent_card() -> dict[str, Any]:
                     "AP2 authorization and Solana Pay settlement."
                 ),
                 "tags": ["commerce", "payments", "solana"],
-                "examples": ["Buy wireless earbuds under 25 USDC"],
+                "examples": ["Buy wireless earbuds under 5 USDC"],
             }
         ],
     }

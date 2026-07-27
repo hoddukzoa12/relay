@@ -39,8 +39,8 @@ MCP_API_KEY=local-secret \
   python -m agentic_broker.mcp.server       # :8092/mcp
 
 # one-shot from the CLI
-python -m agentic_broker.buyer.cli --query "wireless earbuds" --budget 25
-python -m agentic_broker.buyer.cli --text "Buy me earbuds under 20 USDC"
+python -m agentic_broker.buyer.cli --query "wireless earbuds" --budget 5
+python -m agentic_broker.buyer.cli --text "Buy me earbuds under 5 USDC"
 ```
 
 Without `GOOGLE_API_KEY`, sourcing falls back to deterministic relevance over

@@ -25,7 +25,6 @@ export const config = {
     clientId,
     clientSecret,
     apiVersion: process.env.SHOPIFY_API_VERSION ?? "2025-01",
-    currency: process.env.SHOPIFY_CURRENCY ?? "USD",
   },
   cluster: process.env.SOLANA_CLUSTER ?? "devnet",
   tracking: {

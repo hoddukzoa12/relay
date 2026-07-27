@@ -1,8 +1,8 @@
 """One-shot buyer purchase from the terminal.
 
 Example:
-  python -m agentic_broker.buyer.cli --query "wireless earbuds" --budget 30
-  python -m agentic_broker.buyer.cli --text "Buy me some wireless earbuds under 25 USDC"
+  python -m agentic_broker.buyer.cli --query "wireless earbuds" --budget 5
+  python -m agentic_broker.buyer.cli --text "Buy me some wireless earbuds under 5 USDC"
 """
 from __future__ import annotations
 
@@ -17,7 +17,12 @@ def main() -> None:
     ap = argparse.ArgumentParser(description="Delegate a purchase to the buyer agent.")
     ap.add_argument("--text", help="natural-language instruction (parsed by Gemini)")
     ap.add_argument("--query", help="what to buy")
-    ap.add_argument("--budget", type=float, default=30.0, help="max USDC to spend")
+    ap.add_argument(
+        "--budget",
+        type=float,
+        default=settings.default_budget_usdc,
+        help="max USDC to spend",
+    )
     ap.add_argument("--ship", default=settings.default_ship_to, help="shipping address")
     args = ap.parse_args()
 

@@ -1,7 +1,10 @@
 import demoCatalog from "./demo-catalog.json" with { type: "json" };
 import type { CatalogProduct } from "@arb/shared";
 import { config } from "./config.js";
-import { shopifyGraphQL } from "./shopify.js";
+import {
+  requireShopifyUsdcParityCurrency,
+  shopifyGraphQL,
+} from "./shopify.js";
 
 export interface ShopifyCatalogData {
   products: {
@@ -105,12 +108,7 @@ export function catalogProductsFromShopify(
 ): CatalogProduct[] {
   return data.products.nodes.flatMap((product) => {
     if (product.status !== "ACTIVE") return [];
-    const variant = [...product.variants.nodes].sort(
-      (a, b) =>
-        Number((b.inventoryQuantity ?? 0) > 0) -
-          Number((a.inventoryQuantity ?? 0) > 0) ||
-        (a.sku ?? "").localeCompare(b.sku ?? ""),
-    )[0];
+    const variant = selectCatalogVariant(product.variants.nodes);
     if (!variant) return [];
     return [
       {
@@ -128,6 +126,38 @@ export function catalogProductsFromShopify(
   });
 }
 
+type ShopifyCatalogVariant =
+  ShopifyCatalogData["products"]["nodes"][number]["variants"]["nodes"][number];
+
+/**
+ * Choose the cheapest actually sellable variant, then prefer deeper stock for
+ * equal prices. A real SKU is required because it is bound into the CartMandate
+ * and copied into the Shopify order evidence.
+ */
+export function selectCatalogVariant(
+  variants: ShopifyCatalogVariant[],
+): ShopifyCatalogVariant | undefined {
+  return [...variants]
+    .filter((variant) => {
+      const price = Number(variant.price);
+      return (
+        variant.inventoryQuantity !== null &&
+        variant.inventoryQuantity > 0 &&
+        variant.sku !== null &&
+        variant.sku.trim().length > 0 &&
+        Number.isFinite(price) &&
+        price > 0
+      );
+    })
+    .sort(
+      (a, b) =>
+        Number(a.price) - Number(b.price) ||
+        (b.inventoryQuantity ?? 0) - (a.inventoryQuantity ?? 0) ||
+        (a.sku ?? "").localeCompare(b.sku ?? "") ||
+        a.id.localeCompare(b.id),
+    )[0];
+}
+
 async function fetchLiveCatalog(): Promise<CatalogProduct[]> {
   const data = await shopifyGraphQL<ShopifyCatalogData>(CATALOG_PRODUCTS, {});
   return catalogProductsFromShopify(data);
@@ -139,6 +169,10 @@ export async function listProducts(
   limit: number,
 ): Promise<CatalogProduct[]> {
   if (config.mock) return rankAndLimit(mockCatalog(), query, limit);
+
+  // Currency validation is intentionally outside the catalog-cache fallback:
+  // stale products must never bypass a failed or mismatched currency check.
+  await requireShopifyUsdcParityCurrency();
 
   try {
     const products = await fetchLiveCatalog();

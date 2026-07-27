@@ -120,7 +120,11 @@ def parse_purchase(text: str) -> dict[str, Any]:
     m = re.search(r"(\d+(?:\.\d+)?)", text)
     fallback = {
         "query": text.strip(),
-        "budget": float(m.group(1)) if m else 30.0,
+        "budget": (
+            float(m.group(1))
+            if m
+            else settings.default_budget_usdc
+        ),
         "shipTo": settings.default_ship_to,
     }
     prompt = (

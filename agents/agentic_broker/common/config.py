@@ -43,6 +43,7 @@ class Settings:
     clerk_api_url: str = os.getenv("CLERK_API_URL", "https://api.clerk.com").rstrip("/")
 
     markup_pct: float = float(os.getenv("BROKER_MARKUP_PCT", "15"))
+    default_budget_usdc: float = float(os.getenv("DEFAULT_BUDGET_USDC", "5"))
     cluster: str = os.getenv("SOLANA_CLUSTER", "devnet")
     default_ship_to: str = os.getenv(
         "DEFAULT_SHIP_TO", "Google Startup Campus, Seoul, KR"

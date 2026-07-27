@@ -4,6 +4,11 @@ import { readFileSync } from "node:fs";
 import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { ShopifyAdminClient } from "../services/commerce/src/shopify-client.ts";
+import {
+  SEED_VENDOR,
+  activeSupplierProducts,
+  relaySeedProductsBySku,
+} from "./shopify-seed-policy.mjs";
 
 const here = dirname(fileURLToPath(import.meta.url));
 const repoRoot = resolve(here, "..");
@@ -77,6 +82,7 @@ const SETUP_QUERY = /* GraphQL */ `
       nodes {
         id
         title
+        vendor
         status
         variants(first: 100) {
           nodes {
@@ -148,41 +154,6 @@ const INVENTORY_SET = /* GraphQL */ `
   }
 `;
 
-const INVENTORY_ACTIVATE = /* GraphQL */ `
-  mutation ActivateSeedInventory(
-    $inventoryItemId: ID!
-    $locationId: ID!
-    $available: Int
-  ) {
-    inventoryActivate(
-      inventoryItemId: $inventoryItemId
-      locationId: $locationId
-      available: $available
-    ) {
-      inventoryLevel { id }
-      userErrors { field message }
-    }
-  }
-`;
-
-const PRODUCT_INVENTORY_LEVELS = /* GraphQL */ `
-  query ProductSeedInventoryLevels($id: ID!) {
-    product(id: $id) {
-      variants(first: 100) {
-        nodes {
-          id
-          inventoryItem {
-            id
-            inventoryLevels(first: 20) {
-              nodes { location { id } }
-            }
-          }
-        }
-      }
-    }
-  }
-`;
-
 const PUBLISH = /* GraphQL */ `
   mutation PublishSeedProduct($id: ID!, $input: [PublicationInput!]!) {
     publishablePublish(id: $id, input: $input) {
@@ -197,6 +168,7 @@ const READBACK_QUERY = /* GraphQL */ `
       nodes {
         id
         title
+        vendor
         status
         totalInventory
         onlineStoreUrl
@@ -210,6 +182,27 @@ const READBACK_QUERY = /* GraphQL */ `
 `;
 
 const setup = await shopify(SETUP_QUERY);
+const supplierProducts = activeSupplierProducts(setup.products.nodes);
+if (supplierProducts.length) {
+  console.log(
+    JSON.stringify(
+      {
+        skipped: true,
+        reason:
+          "active supplier catalog present; Relay demo seeding is fallback-only",
+        supplierProducts: supplierProducts.map((product) => ({
+          id: product.id,
+          vendor: product.vendor,
+          title: product.title,
+        })),
+      },
+      null,
+      2,
+    ),
+  );
+  process.exit(0);
+}
+
 const location = setup.locations.nodes.find((candidate) => candidate.isActive);
 const onlineStore = setup.publications.nodes.find(
   (publication) => publication.name === "Online Store",
@@ -217,27 +210,13 @@ const onlineStore = setup.publications.nodes.find(
 if (!location) throw new Error("No active Shopify inventory location found");
 if (!onlineStore) throw new Error("Online Store publication not found");
 
-const productsBySku = new Map();
-const productsByTitle = new Map();
-for (const product of setup.products.nodes) {
-  productsByTitle.set(product.title, product);
-  for (const variant of product.variants.nodes) {
-    if (variant.sku) productsBySku.set(variant.sku, { product, variant });
-  }
-}
+const productsBySku = relaySeedProductsBySku(setup.products.nodes);
 
 const inventoryQuantities = [];
 const publishableProductIds = new Set();
 
 for (const item of seedCatalog) {
-  let match = productsBySku.get(item.sku);
-  if (!match) {
-    const titleMatch = productsByTitle.get(item.title);
-    const defaultVariant = titleMatch?.variants.nodes[0];
-    if (titleMatch && defaultVariant) {
-      match = { product: titleMatch, variant: defaultVariant };
-    }
-  }
+  const match = productsBySku.get(item.sku);
   let product;
   let variant;
 
@@ -247,7 +226,7 @@ for (const item of seedCatalog) {
         title: item.title,
         descriptionHtml: `<p>${item.description}</p>`,
         status: "ACTIVE",
-        vendor: "Relay",
+        vendor: SEED_VENDOR,
         productType: item.productType,
         tags: ["relay-demo", "relay-seed", ...item.tags],
       },
@@ -267,7 +246,7 @@ for (const item of seedCatalog) {
         title: item.title,
         descriptionHtml: `<p>${item.description}</p>`,
         status: "ACTIVE",
-        vendor: "Relay",
+        vendor: SEED_VENDOR,
         productType: item.productType,
         tags: ["relay-demo", "relay-seed", ...item.tags],
       },
@@ -305,54 +284,12 @@ for (const item of seedCatalog) {
   publishableProductIds.add(product.id);
 }
 
-const hoodie = setup.products.nodes.find(
-  (product) =>
-    product.title === "Heavyweight Hoodie P2016" ||
-    product.variants.nodes.some((variant) =>
-      variant.sku?.startsWith("P2016-"),
-    ),
-);
-if (hoodie) {
-  const data = await shopify(PRODUCT_UPDATE, {
-    product: { id: hoodie.id, status: "ACTIVE" },
-  });
-  requireMutation(data.productUpdate, "productUpdate");
-  const inventoryLevels = await shopify(PRODUCT_INVENTORY_LEVELS, {
-    id: hoodie.id,
-  });
-  for (const variant of inventoryLevels.product.variants.nodes) {
-    const stocked = variant.inventoryItem.inventoryLevels.nodes.some(
-      (level) => level.location.id === location.id,
-    );
-    if (!stocked) {
-      const activationData = await shopify(INVENTORY_ACTIVATE, {
-        inventoryItemId: variant.inventoryItem.id,
-        locationId: location.id,
-        available: 10,
-      });
-      requireMutation(
-        activationData.inventoryActivate,
-        "inventoryActivate",
-      );
-    }
-    inventoryQuantities.push({
-      inventoryItemId: variant.inventoryItem.id,
-      locationId: location.id,
-      quantity: 10,
-    });
-  }
-  publishableProductIds.add(hoodie.id);
-  console.log(
-    `[seed] topping up ${hoodie.title} (${hoodie.variants.nodes.length} variants)`,
-  );
-}
-
 const inventoryData = await shopify(INVENTORY_SET, {
   input: {
     name: "available",
     reason: "correction",
     ignoreCompareQuantity: true,
-    referenceDocumentUri: "relay://catalog-seed/issue-25",
+    referenceDocumentUri: "relay://catalog-seed/fallback",
     quantities: inventoryQuantities,
   },
 });
@@ -372,7 +309,7 @@ const readback = await shopify(READBACK_QUERY, {
 const seedSkus = new Set(seedCatalog.map((item) => item.sku));
 const catalog = readback.products.nodes.filter(
   (product) =>
-    product.title === "Heavyweight Hoodie P2016" ||
+    product.vendor === SEED_VENDOR &&
     product.variants.nodes.some((variant) => seedSkus.has(variant.sku)),
 );
 const summarizedCatalog = catalog.map((product) => ({

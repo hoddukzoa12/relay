@@ -30,7 +30,7 @@ Concrete spec notes + how they map to Relay. Backs issue **#9** (A2A/AP2) and
   "defaultInputModes": ["application/json", "text/plain"],
   "defaultOutputModes": ["application/json", "text/plain"],
   "skills": [
-    { "id": "quote",  "name": "Quote",  "description": "Source a product and issue an agent-native USDC payment request (CartMandate).", "tags": ["commerce","payments"], "examples": ["Buy wireless earbuds under 25 USDC"] },
+    { "id": "quote",  "name": "Quote",  "description": "Source a product and issue an agent-native USDC payment request (CartMandate).", "tags": ["commerce","payments"], "examples": ["Buy wireless earbuds under 5 USDC"] },
     { "id": "settle", "name": "Settle", "description": "Verify the on-chain USDC payment and record the order.", "tags": ["payments","solana"] }
   ]
 }

@@ -108,6 +108,14 @@ class BrokerIdempotencyTest(unittest.TestCase):
         self.assertEqual(first, second)
         self.assertEqual(first.shopifyOrderId, "shopify-order-1")
         record_order.assert_called_once()
+        self.assertEqual(
+            record_order.call_args.kwargs["product_id"],
+            "gid://shopify/ProductVariant/1",
+        )
+        self.assertEqual(
+            record_order.call_args.kwargs["sku"],
+            "RELAY-TEST-1",
+        )
 
     def test_paid_state_survives_fulfillment_failure_and_retry(self) -> None:
         quote = self._quote()
