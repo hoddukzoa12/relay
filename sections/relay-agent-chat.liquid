@@ -828,13 +828,12 @@
     }
 
     initShowcase() {
-      const slides = this.catalog
-        .filter((product) => product?.available && product?.image)
-        .map((product, index) => this.createProductSlide(product, index));
-      slides.push(
-        this.createInfoSlide("mcp"),
+      // The rail explains Relay and its MCP surface. Products belong in the
+      // conversation, where the agent can say why it picked them.
+      const slides = [
         this.createInfoSlide("relay"),
-      );
+        this.createInfoSlide("mcp"),
+      ];
       const track = this.$("#showcase-slides");
       slides.forEach((slide) => track.append(slide));
       this.showcaseSlides = slides;
