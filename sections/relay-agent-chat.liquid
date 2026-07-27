@@ -5,6 +5,7 @@
     heading="{{ section.settings.heading | escape }}"
     intro="{{ section.settings.intro | escape }}"
     currency="{{ cart.currency.iso_code | default: shop.currency | escape }}"
+    shopify-login-url="{{ routes.storefront_login_url | escape }}"
   >
     <script type="application/json" data-relay-catalog>
       [
@@ -78,7 +79,7 @@
       }
 
       .eyebrow, .message-label, .state, .proof-kicker, .catalog-meta,
-      .wallet-state, .step-number, .composer-note {
+      .identity-name, .wallet-state, .step-number, .composer-note {
         font: 650 10px/1.25 ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
         letter-spacing: .09em;
         text-transform: uppercase;
@@ -147,6 +148,7 @@
       }
 
       .chat-title { font-weight: 570; letter-spacing: -.02em; }
+      .identity-name { color: var(--relay-ink); }
       .wallet-state { color: var(--relay-accent); text-align: right; }
       .wallet-state.error { color: var(--relay-muted); }
       .identity {
@@ -497,6 +499,7 @@
         <header class="chat-head">
           <span class="chat-title">Shopping conversation</span>
           <div class="identity">
+            <span class="identity-name" id="identity-name" hidden></span>
             <span class="wallet-state" id="wallet-state">[ CHECKING AGENT ]</span>
             <label class="identity-limit">
               Limit
@@ -505,7 +508,7 @@
             </label>
             <button id="approve" type="button" disabled>Approve once</button>
             <button id="revoke" type="button" disabled>Revoke</button>
-            <button id="auth" type="button">Wallet sign-in</button>
+            <button id="auth" type="button">Sign in with Shopify</button>
           </div>
         </header>
         <div class="messages" id="messages" role="log" aria-live="polite" aria-relevant="additions"></div>
@@ -521,7 +524,7 @@
             >
             <button class="send" id="send" type="submit">Send ↗</button>
           </form>
-          <p class="composer-note">Search is public. Payment requires Clerk wallet sign-in and one on-chain SPL approval; later purchases need 0 wallet clicks.</p>
+          <p class="composer-note">Search is public. Payment requires Shopify sign-in, your verified Solana wallet, and one on-chain SPL approval; later purchases need 0 wallet clicks.</p>
         </footer>
       </section>
     </main>
@@ -544,7 +547,10 @@
       this.walletAddress = "";
       this.authClient = null;
       this.identity = null;
+      this.authBranch = "initializing";
       this.delegation = null;
+      this.shopifyLoginUrl =
+        (this.getAttribute("shopify-login-url") || "/customer_authentication/login").trim();
       this.sessionKey = `relay-agent-chat:${window.location.pathname}`;
       this.agentSessionKey = `relay-agent-session:${window.location.pathname}`;
       this.agentSessionId = this.loadAgentSessionId();
@@ -662,6 +668,13 @@
       return error?.message || "The agent request failed.";
     }
 
+    authEvidence() {
+      return {
+        branch: this.authBranch,
+        events: this.authClient?.telemetry?.() || [],
+      };
+    }
+
     async fetchJson(path, options = {}) {
       if (!this.isConfigured()) {
         throw new Error("The buyer agent URL is not configured for this section.");
@@ -720,9 +733,16 @@
         this.authClient = window.RelayAuth.client(this.baseUrl);
         this.authClient.subscribe((identity) => this.updateIdentity(identity));
         const status = await this.authClient.ready;
+        this.applyAuthStatus(status);
         if (!status.configured) {
           this.$("#auth").disabled = true;
           this.$("#auth").textContent = "Clerk unavailable";
+        } else if (status.fallbackRequired) {
+          this.appendMessage(
+            "agent",
+            "Shopify sign-in returned, but this browser did not expose the Clerk session. Continuing identity verification securely on this page; catalog search remains available.",
+          );
+          await this.authClient.openFallbackSignIn();
         }
       } catch (error) {
         this.$("#wallet-state").textContent = `[ AUTH ERROR ]`;
@@ -733,26 +753,57 @@
 
     async updateIdentity(identity) {
       this.identity = identity;
+      const authStatus = this.authClient?.status?.();
+      this.applyAuthStatus(authStatus);
       const authButton = this.$("#auth");
-      if (!identity?.walletAddress) {
+      const identityName = this.$("#identity-name");
+      if (!authStatus?.sessionActive) {
         this.delegation = null;
-        authButton.textContent = "Wallet sign-in";
+        identityName.hidden = true;
+        identityName.textContent = "";
+        authButton.hidden = false;
+        authButton.textContent = this.authBranch === "shopify_return_fallback"
+          ? "Continue sign-in"
+          : "Sign in with Shopify";
         this.$("#approve").disabled = true;
         this.$("#revoke").disabled = true;
         this.$("#wallet-state").textContent = "[ SIGN IN TO BUY ]";
-        this.$("#wallet-state").title = "Catalog search remains available without sign-in.";
+        this.$("#wallet-state").title =
+          "Catalog search remains available without sign-in; only payment is blocked.";
         return;
       }
-      authButton.textContent = "Sign out";
+      identityName.hidden = false;
+      identityName.textContent = `${identity?.displayName || "Shopify 고객"}님으로 로그인됨`;
+      authButton.hidden = true;
+      if (!identity?.walletAddress) {
+        this.delegation = null;
+        this.$("#approve").disabled = true;
+        this.$("#revoke").disabled = true;
+        this.$("#wallet-state").textContent = "[ VERIFIED WALLET REQUIRED ]";
+        this.$("#wallet-state").title =
+          "This Clerk account needs a registered Solana wallet before payment.";
+        return;
+      }
       this.$("#approve").disabled = false;
       await this.refreshDelegation();
+    }
+
+    applyAuthStatus(status) {
+      if (!status?.branch) return;
+      this.authBranch = status.branch;
+      this.dataset.authBranch = status.branch;
+      this.dataset.authBranchSource = status.source || "";
     }
 
     async toggleAuth() {
       try {
         if (!this.authClient) await this.loadAuth();
-        if (this.identity) await this.authClient.signOut();
-        else await this.authClient.signIn();
+        if (this.identity) return;
+        if (this.authBranch === "shopify_return_fallback") {
+          await this.authClient.openFallbackSignIn();
+        } else {
+          await this.authClient.signInViaShopify(this.shopifyLoginUrl);
+        }
       } catch (error) {
         this.appendMessage("agent", this.errorMessage(error));
       }
@@ -782,7 +833,7 @@
     }
 
     async refreshDelegation() {
-      if (!this.identity || !this.authClient) return null;
+      if (!this.identity?.walletAddress || !this.authClient) return null;
       try {
         const status = await this.authClient.delegation();
         this.renderDelegation(status);
@@ -839,9 +890,14 @@
     }
 
     async requirePurchaseDelegation() {
-      if (!this.identity) {
+      if (!this.authClient?.status?.().sessionActive) {
         throw new Error(
-          "Wallet sign-in is required to buy. Catalog search and comparison remain available.",
+          "Sign in through Shopify before buying. Catalog search and comparison remain available.",
+        );
+      }
+      if (!this.identity?.walletAddress) {
+        throw new Error(
+          "Register and connect a Solana wallet on this Clerk account before buying.",
         );
       }
       const status = await this.refreshDelegation();
@@ -882,7 +938,7 @@
           state.classList.add("error");
         }
       }
-      if (this.identity) await this.refreshDelegation();
+      if (this.identity?.walletAddress) await this.refreshDelegation();
     }
 
     parseBudget(text) {
@@ -998,7 +1054,7 @@
             ? { approvalTxSignature: this.approvalTxSignature() }
             : {}),
         };
-        result = this.identity
+        result = this.identity?.walletAddress
           ? await this.authClient.signedJson("/chat", {
               method: "POST",
               headers: { "Content-Type": "application/json" },
