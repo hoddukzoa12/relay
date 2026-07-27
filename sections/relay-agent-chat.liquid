@@ -1393,6 +1393,28 @@
       this.scrollToLatest();
     }
 
+    /** Render the gate the server asked for, against whatever the shopper is
+     *  currently buying: the pending purchase, else the item just quoted. */
+    async renderChatPaymentGate(result, products = []) {
+      const product =
+        this.pendingPurchase?.product ||
+        products[0] ||
+        this.lastCandidates?.[0];
+      if (!product) return;
+      const options = this.pendingPurchase?.options || {
+        budget: this.lastIntent?.budget,
+        announceSelection: false,
+      };
+      if (result.authRequired || !this.identity?.walletAddress) {
+        this.showAuthGate(product, options, {
+          continuation: this.authBranch === "shopify_return_fallback",
+        });
+        return;
+      }
+      const status = await this.refreshDelegation();
+      this.showApprovalGate(product, options, status);
+    }
+
     showApprovalGate(product, options = {}, status = null) {
       const pending = this.rememberPendingPurchase(product, options);
       const budget = Number(pending.options.budget);
@@ -1804,6 +1826,13 @@
       const parsedBudget = Number(result?.search?.budget);
       if (Number.isFinite(parsedBudget) && parsedBudget > 0) {
         this.lastIntent = { budget: parsedBudget };
+      }
+
+      // The server refuses spending tools when the principal is unverified or
+      // has no allowance. Surface that as the same inline panel the card flow
+      // uses — otherwise the shopper is told to approve with nothing to click.
+      if (result?.paymentBlocked) {
+        this.renderChatPaymentGate(result, products);
       }
 
       if (products.length) {
