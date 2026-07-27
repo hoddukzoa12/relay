@@ -63,7 +63,7 @@
 
       .shell {
         display: grid;
-        grid-template-columns: minmax(250px, .72fr) minmax(0, 1.55fr);
+        grid-template-columns: minmax(0, 1fr);
         min-height: min(900px, calc(100vh - 70px));
         border-top: 1px solid var(--relay-rule);
         border-bottom: 1px solid var(--relay-rule);
@@ -482,32 +482,19 @@
     </style>
 
     <main class="shell">
-      <aside class="editorial">
-        <div>
-          <p class="eyebrow">Relay / Agent-native commerce</p>
-          <h1 id="heading">Tell it what you need.</h1>
-          <p class="intro" id="intro">Search the live catalog, set a budget, and let the agent settle in USDC on Solana devnet.</p>
-        </div>
-        <div class="rail-foot" aria-label="How Relay purchases work">
-          <div class="rail-rule"><strong>01</strong><span>Real Shopify catalog</span></div>
-          <div class="rail-rule"><strong>02</strong><span>1 approval, then 0 clicks</span></div>
-          <div class="rail-rule"><strong>03</strong><span>On-chain USDC proof</span></div>
-        </div>
-      </aside>
-
       <section class="chat" aria-label="Relay shopping chat">
         <header class="chat-head">
           <span class="chat-title">Shopping conversation</span>
           <div class="identity">
             <span class="identity-name" id="identity-name" hidden></span>
             <span class="wallet-state" id="wallet-state">[ CHECKING AGENT ]</span>
-            <label class="identity-limit">
+            <label class="identity-limit" id="limit-field" hidden>
               Limit
               <input id="delegation-limit" inputmode="decimal" value="50" aria-label="USDC delegation limit">
               USDC
             </label>
-            <button id="approve" type="button" disabled>Approve once</button>
-            <button id="revoke" type="button" disabled>Revoke</button>
+            <button id="approve" type="button" disabled hidden>Approve once</button>
+            <button id="revoke" type="button" disabled hidden>Revoke</button>
             <button id="auth" type="button">Sign in with Shopify</button>
           </div>
         </header>
@@ -524,7 +511,6 @@
             >
             <button class="send" id="send" type="submit">Send ↗</button>
           </form>
-          <p class="composer-note">Search is public. Payment requires Shopify sign-in, your verified Solana wallet, and one on-chain SPL approval; later purchases need 0 wallet clicks.</p>
         </footer>
       </section>
     </main>
@@ -557,11 +543,6 @@
 
       this.attachShadow({ mode: "open" }).append(view.content.cloneNode(true));
       this.$ = (selector) => this.shadowRoot.querySelector(selector);
-      this.$("#heading").textContent =
-        (this.getAttribute("heading") || "").trim() || "Tell it what you need.";
-      this.$("#intro").textContent =
-        (this.getAttribute("intro") || "").trim() ||
-        "Search the live catalog, set a budget, and let the agent settle in USDC on Solana devnet.";
       this.$("#composer").addEventListener("submit", (event) => this.submit(event));
       this.$("#auth").addEventListener("click", () => this.toggleAuth());
       this.$("#approve").addEventListener("click", () => this.approve());
@@ -765,12 +746,18 @@
         authButton.textContent = this.authBranch === "shopify_return_fallback"
           ? "Continue sign-in"
           : "Sign in with Shopify";
+        for (const id of ["#limit-field", "#approve", "#revoke"]) {
+          this.$(id).hidden = true;
+        }
         this.$("#approve").disabled = true;
         this.$("#revoke").disabled = true;
         this.$("#wallet-state").textContent = "[ SIGN IN TO BUY ]";
         this.$("#wallet-state").title =
           "Catalog search remains available without sign-in; only payment is blocked.";
         return;
+      }
+      for (const id of ["#limit-field", "#approve", "#revoke"]) {
+        this.$(id).hidden = false;
       }
       identityName.hidden = false;
       identityName.textContent = `${identity?.displayName || "Shopify 고객"}님으로 로그인됨`;
@@ -812,7 +799,12 @@
     renderDelegation(status) {
       this.delegation = status;
       const state = this.$("#wallet-state");
-      if (!this.identity?.walletAddress) {
+      // Delegation controls only mean something once a wallet is signed in.
+      const signedIn = Boolean(this.identity?.walletAddress);
+      for (const id of ["#limit-field", "#approve", "#revoke"]) {
+        this.$(id).hidden = !signedIn;
+      }
+      if (!signedIn) {
         state.textContent = "[ SIGN IN TO BUY ]";
         return;
       }
