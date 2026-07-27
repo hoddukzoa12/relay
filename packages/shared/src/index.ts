@@ -220,6 +220,24 @@ export type DelegationTransaction = z.infer<
   typeof DelegationTransactionSchema
 >;
 
+/**
+ * Fail-closed response for an authenticated payer whose live SPL allowance
+ * cannot cover the requested purchase. Clients can open `approvalUrl` once,
+ * then retry the same autonomous flow.
+ */
+export const DelegationApprovalRequiredSchema = z.object({
+  status: z.literal("approval-required"),
+  reason: z.string().min(1),
+  delegator: z.string(),
+  requiredAmount: MoneySchema,
+  allowanceRemaining: MoneySchema,
+  balance: MoneySchema,
+  approvalUrl: z.string().url(),
+});
+export type DelegationApprovalRequired = z.infer<
+  typeof DelegationApprovalRequiredSchema
+>;
+
 export const IntentMandateSchema = z.object({
   user_cart_confirmation_required: z.boolean(),
   natural_language_description: z.string(),

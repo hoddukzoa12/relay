@@ -291,8 +291,15 @@ def buy(
     body: BuyRequest,
     authorization: Optional[str] = Header(default=None),
 ) -> dict[str, Any]:
+    identity = _optional_identity(authorization)
     if body.text:
-        return flow.buy_from_text(body.text)
+        try:
+            return flow.buy_from_text(
+                body.text,
+                identity_wallet=identity.wallet_address if identity else None,
+            )
+        except buyer_tools.DelegationApprovalRequiredError as exc:
+            raise HTTPException(status_code=409, detail=exc.response) from exc
     query = body.query or "wireless earbuds"
     budget = (
         body.budget
@@ -301,15 +308,20 @@ def buy(
     )
     ship_to = body.shipTo or settings.default_ship_to
 
-    identity: auth.ClerkIdentity | None = None
     if body.intentMandate is not None:
-        identity = _identity(authorization)
+        if identity is None:
+            raise HTTPException(status_code=401, detail="Clerk session required")
         mandate = body.intentMandate
         mandate_data = mandate.model_dump(exclude_none=True)
         if mandate.signer_wallet != identity.wallet_address:
             raise HTTPException(
                 status_code=403,
                 detail="IntentMandate signer does not match the Clerk wallet",
+            )
+        if mandate.delegator and mandate.delegator != identity.wallet_address:
+            raise HTTPException(
+                status_code=403,
+                detail="IntentMandate delegator does not match the Clerk wallet",
             )
         if not verify_wallet_signature(
             mandate_data, mandate.signature, identity.wallet_address
@@ -338,13 +350,16 @@ def buy(
                 detail="IntentMandate does not match the requested purchase",
             )
 
-    return flow.buy(
-        query=query,
-        budget=budget,
-        ship_to=ship_to,
-        intent_mandate=body.intentMandate,
-        identity_wallet=identity.wallet_address if identity else None,
-    )
+    try:
+        return flow.buy(
+            query=query,
+            budget=budget,
+            ship_to=ship_to,
+            intent_mandate=body.intentMandate,
+            identity_wallet=identity.wallet_address if identity else None,
+        )
+    except buyer_tools.DelegationApprovalRequiredError as exc:
+        raise HTTPException(status_code=409, detail=exc.response) from exc
 
 
 @app.post("/web/buy")
@@ -365,13 +380,18 @@ def web_buy(
             identity.wallet_address, body.approvalTxSignature
         ):
             if body.text:
-                return flow.buy_from_text(body.text)
+                return flow.buy_from_text(
+                    body.text,
+                    identity_wallet=identity.wallet_address,
+                )
             return flow.buy(
                 query=body.query or "wireless earbuds",
                 budget=body.budget if body.budget is not None else 30.0,
                 ship_to=body.shipTo or settings.default_ship_to,
                 identity_wallet=identity.wallet_address,
             )
+    except buyer_tools.DelegationApprovalRequiredError as exc:
+        raise HTTPException(status_code=409, detail=exc.response) from exc
     except PermissionError as exc:
         raise HTTPException(status_code=409, detail=str(exc)) from exc
 

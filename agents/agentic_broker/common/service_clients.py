@@ -27,6 +27,14 @@ _CREDENTIAL_LOCK = Lock()
 _LOG = logging.getLogger(__name__)
 
 
+class ServiceRequestError(RuntimeError):
+    """Preserve peer HTTP status so callers can handle typed refusals safely."""
+
+    def __init__(self, status_code: int, detail: str) -> None:
+        self.status_code = status_code
+        super().__init__(detail)
+
+
 @lru_cache(maxsize=16)
 def _id_token_credentials(audience: str) -> Credentials:
     """Resolve application-default ID-token credentials for one Cloud Run peer."""
@@ -88,8 +96,9 @@ def _post(
             detail = payload.get("error") or payload.get("detail")
         except (ValueError, AttributeError):
             detail = None
-        raise RuntimeError(
-            str(detail or f"Service request failed with HTTP {resp.status_code}")
+        raise ServiceRequestError(
+            resp.status_code,
+            str(detail or f"Service request failed with HTTP {resp.status_code}"),
         ) from exc
     return resp.json()
 
@@ -111,8 +120,9 @@ def _get(
             detail = payload.get("error") or payload.get("detail")
         except (ValueError, AttributeError):
             detail = None
-        raise RuntimeError(
-            str(detail or f"Service request failed with HTTP {resp.status_code}")
+        raise ServiceRequestError(
+            resp.status_code,
+            str(detail or f"Service request failed with HTTP {resp.status_code}"),
         ) from exc
     return resp.json()
 

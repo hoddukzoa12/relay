@@ -81,7 +81,7 @@ carried as A2A **DataParts**, keyed by type, e.g.
 
 | Mandate | Signed by | Contains (modeled on `ap2.types.mandate`) |
 |---|---|---|
-| **IntentMandate** | buyer agent, attesting the Clerk identity + on-chain SPL approval (agent-only compatibility path omits delegation fields) | `natural_language_description`, price ceiling, `intent_expiry`, plus `delegator`, `delegateAuthority`, `allowanceRemaining`, `approvalTxSignature` on the web path |
+| **IntentMandate** | buyer agent, attesting the verified human identity + live on-chain SPL delegation (principal-free compatibility paths omit delegation fields) | `natural_language_description`, price ceiling, `intent_expiry`, plus `delegator`, `delegateAuthority`, `allowanceRemaining`; browser approval flows also record `approvalTxSignature` |
 | **CartMandate** | **merchant** (shopping) | `contents`: real catalog cart_items `[{sku,variant_id,name,price}]`, `total`, `currency`, shipping/tax, `refund_period`, `cart_expiry`, `merchant_name` |
 | **PaymentMandate** | user (buyer) | payment method token, `amount`+`currency`, `merchant_name`, payer info, `timestamp`; bound to the Cart/Intent mandate |
 
@@ -93,15 +93,31 @@ CartMandate → the buyer agent issues a PaymentMandate and spends directly from
 the human wallet's USDC ATA as delegate. The agent remains transaction fee payer,
 so the user needs no SOL and sees zero wallet prompts on later purchases.
 
-The allowance SSOT is always the token account. Immediately before every web
-transfer, `payments` calls `getAccount(sourceAta)` and checks the owner,
+The allowance SSOT is always the token account. Immediately before every
+authenticated-user transfer, `payments` calls `getAccount(sourceAta)` and checks the owner,
 delegate, delegated amount, and USDC balance. A signed mandate snapshot never
 authorizes money by itself. Revoke or an exhausted/insufficient allowance blocks
-the purchase with a reapproval message.
+the purchase with an `approval-required` response containing an executable
+storefront approval URL. It never falls through to the broker buyer wallet.
 
-**Human-absent agent flow:** MCP, A2A, CLI, and legacy `/buy` calls omit
-`delegator`; the configured buyer-agent wallet remains source, signer, and fee
-payer. This compatibility path retains zero human clicks.
+### Who pays
+
+Payer selection follows the authenticated principal, not the transport:
+
+| Situation | USDC source |
+|---|---|
+| Web chat with a verified Clerk session | verified user's wallet via SPL delegation |
+| MCP with verified Clerk OAuth | verified user's wallet via SPL delegation |
+| A2A carrying a verified/signed human identity | that signed user's wallet via SPL delegation |
+| MCP API-key service principal with no user | configured buyer-agent wallet |
+| CLI, rehearsal, or legacy request with no human principal | configured buyer-agent wallet |
+| Broker supplier purchase (Leg 2) | broker wallet |
+
+The buyer-agent wallet remains transaction signer/delegate and fee payer for a
+user-funded Leg 1 purchase, so repeat purchases need zero user signatures.
+Only principal-free API-key/CLI/rehearsal paths may use it as the USDC source.
+An authenticated user with no delegation, an exhausted limit, or insufficient
+balance receives the approval URL and no payment transaction is submitted.
 
 > Align exact field names to the reference types in
 > `google-agentic-commerce/AP2` (`src/ap2/types/mandate.py`) at implementation time.

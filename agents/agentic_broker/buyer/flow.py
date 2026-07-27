@@ -21,7 +21,13 @@ def buy(
     identity_wallet: str | None = None,
 ) -> dict[str, Any]:
     # Step 1–3: request a quote / agent-native payment request.
-    quote = tools.request_quote(query, budget, ship_to, intent_mandate)
+    quote = tools.request_quote(
+        query,
+        budget,
+        ship_to,
+        intent_mandate,
+        delegator=identity_wallet,
+    )
 
     # Buyer-side guardrail: never overpay the budget it was delegated.
     price = float(quote["price"]["amount"])
@@ -38,6 +44,7 @@ def buy(
         quote["price"]["amount"],
         quote["reference"],
         quote.get("ap2Mandates"),
+        delegator=identity_wallet,
     )
 
     # Step 7–11: hand proof to the broker; it verifies on-chain + records the order.
@@ -66,7 +73,16 @@ def buy(
     }
 
 
-def buy_from_text(text: str) -> dict[str, Any]:
+def buy_from_text(
+    text: str,
+    *,
+    identity_wallet: str | None = None,
+) -> dict[str, Any]:
     """Parse a natural-language instruction, then run the purchase."""
     intent = llm.parse_purchase(text)
-    return buy(intent["query"], intent["budget"], intent["shipTo"])
+    return buy(
+        intent["query"],
+        intent["budget"],
+        intent["shipTo"],
+        identity_wallet=identity_wallet,
+    )
