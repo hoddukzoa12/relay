@@ -2,15 +2,18 @@
 from __future__ import annotations
 
 from datetime import datetime, timedelta, timezone
+from decimal import Decimal, InvalidOperation, ROUND_HALF_UP
 import logging
 from typing import Any
 from uuid import uuid4
 
 from ..common import service_clients
+from ..common.config import settings
 from ..common.contracts import (
     CART_MANDATE_DATA_KEY,
     INTENT_MANDATE_DATA_KEY,
     PAYMENT_MANDATE_DATA_KEY,
+    CatalogProductsResponse,
     CartMandate,
     IntentMandate,
 )
@@ -20,6 +23,78 @@ _PAYMENT_REQUEST_DATA_KEY = "relay.payment.PaymentRequest"
 _ORDER_CONFIRMATION_DATA_KEY = "relay.payment.OrderConfirmation"
 _SETTLEMENT_REQUEST_DATA_KEY = "relay.payment.SettlementRequest"
 _MERCHANT_NAME = "Relay Shopping Broker"
+
+
+def search_catalog(
+    query: str,
+    budget: float,
+    limit: int = 3,
+) -> dict[str, Any]:
+    """Search real, in-stock Shopify variants within a USDC budget.
+
+    The returned ``price`` includes the configured broker markup, so the model
+    compares the same safe ceiling that the shopping broker will enforce when
+    it creates a quote. No product or inventory value is model-generated.
+    """
+    if budget <= 0:
+        raise ValueError("budget must be greater than zero")
+    if limit < 1 or limit > 12:
+        raise ValueError("limit must be between 1 and 12")
+
+    try:
+        catalog = CatalogProductsResponse(
+            **service_clients.commerce_products(query, limit=50)
+        )
+    except Exception as exc:  # noqa: BLE001
+        _LOG.info("[chat] catalog query failed; retrying full catalog: %s", exc)
+        catalog = CatalogProductsResponse(
+            **service_clients.commerce_products("", limit=50)
+        )
+
+    ceiling = Decimal(str(budget))
+    multiplier = Decimal("1") + Decimal(str(settings.markup_pct)) / Decimal("100")
+    within_budget: list[dict[str, Any]] = []
+    over_budget: list[dict[str, Any]] = []
+    for item in catalog.products:
+        product = item.model_dump()
+        try:
+            cost = Decimal(product["price"])
+            inventory = int(product["inventoryQuantity"])
+        except (KeyError, TypeError, ValueError, InvalidOperation):
+            continue
+        if inventory <= 0 or cost <= 0:
+            continue
+        price = (cost * multiplier).quantize(
+            Decimal("0.01"), rounding=ROUND_HALF_UP
+        )
+        candidate = {
+            **product,
+            "description": str(product.get("description", ""))[:600],
+            "catalogPrice": format(cost, "f"),
+            "price": format(price, ".2f"),
+            "currency": "USDC",
+        }
+        if price <= ceiling:
+            within_budget.append(candidate)
+        else:
+            over_budget.append(candidate)
+
+    # The commerce endpoint already relevance-ranks results. Preserve that
+    # ordering for in-budget matches and show the nearest over-budget items
+    # price-first when no safe candidate exists.
+    over_budget.sort(key=lambda product: Decimal(product["price"]))
+    return {
+        "query": query,
+        "budget": format(ceiling, "f"),
+        "currency": "USDC",
+        "products": within_budget[:limit],
+        "closestOverBudget": over_budget[: min(limit, 3)],
+    }
+
+
+def get_order_status(identifier: str) -> dict[str, Any]:
+    """Read a Relay order by orderRef or Shopify name through the broker API."""
+    return service_clients.shopping_order(identifier)
 
 
 def _signed_mandate(unsigned: dict[str, Any], signer: str) -> dict[str, Any]:

@@ -11,14 +11,14 @@ import httpx
 from fastapi import FastAPI, Header, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import Response
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
 from ..common import service_clients
 from ..common.agent_cards import buyer_agent_card
 from ..common.config import settings
 from ..common.contracts import IntentMandate
 from ..common.mandates import verify_wallet_signature
-from . import auth, flow
+from . import auth, conversation, flow
 
 
 def _cors_origins() -> list[str]:
@@ -54,6 +54,15 @@ class BuyRequest(BaseModel):
     budget: Optional[float] = None
     shipTo: Optional[str] = None
     intentMandate: Optional[IntentMandate] = None
+
+
+class ChatRequest(BaseModel):
+    sessionId: str = Field(
+        min_length=8,
+        max_length=128,
+        pattern=r"^[A-Za-z0-9][A-Za-z0-9_-]+$",
+    )
+    message: str = Field(min_length=1, max_length=1000)
 
 
 @app.get("/health")
@@ -122,6 +131,15 @@ def wallets() -> dict[str, Any]:
         return service_clients.payments_wallets()
     except Exception as exc:  # noqa: BLE001
         return {"error": str(exc)}
+
+
+@app.post("/chat")
+def chat(body: ChatRequest) -> dict[str, Any]:
+    """Run one multi-turn ADK buyer-agent turn for a storefront session."""
+    message = body.message.strip()
+    if not message:
+        raise HTTPException(status_code=422, detail="message must not be blank")
+    return conversation.respond(body.sessionId, message)
 
 
 def _decimal_units(amount: int, decimals: int) -> str:
