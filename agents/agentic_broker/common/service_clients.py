@@ -65,11 +65,19 @@ def _cloud_run_auth_headers(url: str) -> dict[str, str]:
     return {"Authorization": f"Bearer {token}"}
 
 
-def _post(url: str, payload: dict[str, Any]) -> dict[str, Any]:
+def _post(
+    url: str,
+    payload: dict[str, Any],
+    *,
+    extra_headers: Optional[dict[str, str]] = None,
+) -> dict[str, Any]:
+    headers = _cloud_run_auth_headers(url)
+    if extra_headers:
+        headers.update(extra_headers)
     resp = httpx.post(
         url,
         json=payload,
-        headers=_cloud_run_auth_headers(url),
+        headers=headers,
         timeout=_TIMEOUT,
     )
     resp.raise_for_status()
@@ -202,8 +210,19 @@ def a2a_quote(intent: dict[str, Any]) -> dict[str, Any]:
     return _post(f"{settings.shopping_agent_url}/a2a/quote", intent)
 
 
-def a2a_settle(req: dict[str, Any]) -> dict[str, Any]:
-    return _post(f"{settings.shopping_agent_url}/a2a/settle", req)
+def a2a_settle(
+    req: dict[str, Any], *, identity_wallet: Optional[str] = None
+) -> dict[str, Any]:
+    headers = (
+        {"X-Relay-Authenticated-Wallet": identity_wallet}
+        if identity_wallet
+        else None
+    )
+    return _post(
+        f"{settings.shopping_agent_url}/a2a/settle",
+        req,
+        extra_headers=headers,
+    )
 
 
 def shopping_order(identifier: str) -> dict[str, Any]:

@@ -194,6 +194,44 @@ class BrokerIdempotencyTest(unittest.TestCase):
         )
         wallets.assert_not_called()
 
+    def test_settlement_retry_cannot_change_bound_owner(self) -> None:
+        quote = self._quote()
+        settlement = SettlementRequest(
+            orderRef=quote.orderRef,
+            reference=quote.reference,
+            txSignature="tx_signature",
+        )
+        verification = {
+            "status": "paid",
+            "txSignature": "tx_signature",
+            "explorer": "https://explorer.test/tx_signature",
+            "amount": "1.15",
+            "reason": None,
+        }
+        with (
+            patch.object(
+                broker.tools, "verify_payment", return_value=verification
+            ),
+            patch.object(
+                broker.tools,
+                "record_order",
+                side_effect=RuntimeError("Shopify unavailable"),
+            ),
+        ):
+            with self.assertRaises(broker.FulfillmentPendingError):
+                broker.handle_settle(
+                    settlement, identity_wallet="first-wallet"
+                )
+
+            retry = broker.handle_settle(
+                settlement, identity_wallet="different-wallet"
+            )
+
+        self.assertEqual(retry.status, "invalid")
+        self.assertEqual(
+            broker._orders[quote.orderRef].buyer_wallet, "first-wallet"
+        )
+
     def test_order_refs_are_uuid_based_and_unique(self) -> None:
         first = self._quote().orderRef
         second = self._quote().orderRef

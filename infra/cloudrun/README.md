@@ -63,8 +63,10 @@ sets all required non-secret values on all services and then wires:
 - buyer CORS → `https://solanagcp.myshopify.com` + both official buyer service
   hostnames;
 - mcp → all four service URLs, with IAM invocation on the three private peers;
-- mcp public edge → `MCP_API_KEY=relay-mcp-api-key:latest`, with both Cloud Run
-  hostnames allowlisted for MCP SDK DNS-rebinding protection.
+- mcp public edge → `CLERK_ISSUER`, `CLERK_JWKS_URL`, and
+  `CLERK_SECRET_KEY=relay-clerk-secret-key:latest` for user OAuth plus
+  `MCP_API_KEY=relay-mcp-api-key:latest` for trusted service clients, with both
+  Cloud Run hostnames allowlisted for MCP SDK DNS-rebinding protection.
 
 The deployment deletes the three Artifact Registry image packages after Cloud
 Run imports the revisions. This avoids ongoing image-storage cost; a repeat
@@ -81,7 +83,7 @@ active versions, within Secret Manager's account-wide free allowance:
 | `relay-google-api-key` | `GOOGLE_API_KEY` | shopping, buyer |
 | `relay-shopify-client-id` | `SHOPIFY_CLIENT_ID` | commerce |
 | `relay-shopify-client-secret` | `SHOPIFY_CLIENT_SECRET` | commerce |
-| `relay-clerk-secret-key` | `CLERK_SECRET_KEY` | buyer |
+| `relay-clerk-secret-key` | `CLERK_SECRET_KEY` | buyer, mcp |
 | `relay-mcp-api-key` | `MCP_API_KEY` | mcp |
 
 `relay-wallets` is JSON with `MERCHANT_WALLET_SECRET` and

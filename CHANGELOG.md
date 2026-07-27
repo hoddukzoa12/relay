@@ -25,6 +25,9 @@ Format: [Keep a Changelog](https://keepachangelog.com/); versioning is SemVer-is
 - Added the Shopify landing-page chat storefront with live catalog cards,
   client-side multi-turn state, autonomous `/buy` settlement progress, and
   inline Solana explorer plus Shopify order proof (#39, Phase 1).
+- Added Clerk OAuth 2.1/PKCE discovery and per-user MCP bearer authentication,
+  verified Solana-wallet order attribution, and a retained service-key path for
+  walletless autonomous agents (#43).
 
 ### Changed
 - Grounded sourcing in in-stock, within-budget Shopify variants, carried the

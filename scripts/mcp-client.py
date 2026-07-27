@@ -32,7 +32,12 @@ def _arguments() -> argparse.Namespace:
     parser.add_argument(
         "--api-key",
         default=os.getenv("MCP_API_KEY", ""),
-        help="defaults to MCP_API_KEY",
+        help="trusted service credential; defaults to MCP_API_KEY",
+    )
+    parser.add_argument(
+        "--oauth-token",
+        default=os.getenv("MCP_OAUTH_TOKEN", ""),
+        help="Clerk OAuth access token; defaults to MCP_OAUTH_TOKEN",
     )
     parser.add_argument("--purchase", action="store_true")
     parser.add_argument("--refund", action="store_true")
@@ -76,11 +81,19 @@ def _print_step(step: str, result: dict[str, Any], attempt: int = 1) -> None:
 
 
 async def _run(args: argparse.Namespace) -> None:
-    if not args.api_key:
-        raise SystemExit("MCP_API_KEY or --api-key is required")
+    if bool(args.api_key) == bool(args.oauth_token):
+        raise SystemExit(
+            "provide exactly one of MCP_OAUTH_TOKEN/--oauth-token or "
+            "MCP_API_KEY/--api-key"
+        )
+    headers = (
+        {"Authorization": f"Bearer {args.oauth_token}"}
+        if args.oauth_token
+        else {"X-Relay-API-Key": args.api_key}
+    )
 
     async with httpx.AsyncClient(
-        headers={"X-Relay-API-Key": args.api_key},
+        headers=headers,
         follow_redirects=True,
         timeout=httpx.Timeout(90.0),
     ) as http_client:

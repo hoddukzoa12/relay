@@ -111,6 +111,7 @@ grant_secret_access relay-shopify-client-secret "$COMMERCE_SA"
 grant_secret_access relay-google-api-key "$SHOPPING_SA"
 grant_secret_access relay-google-api-key "$BUYER_SA"
 grant_secret_access relay-clerk-secret-key "$BUYER_SA"
+grant_secret_access relay-clerk-secret-key "$MCP_SA"
 grant_secret_access relay-mcp-api-key "$MCP_SA"
 
 COMMON_ENV=(
@@ -277,7 +278,7 @@ gcloud run services update buyer \
 deploy_service \
   mcp "$AGENTS_IMAGE" 8092 "$MCP_SA" public \
   "MCP_PORT=8092@MCP_CORS_ORIGINS=${MCP_CORS_ORIGINS:-*}@MCP_ALLOWED_HOSTS=mcp-${PROJECT_NUMBER}.${REGION}.run.app@MCP_ALLOWED_ORIGINS=${MCP_ALLOWED_ORIGINS:-http://localhost:*,http://127.0.0.1:*}@PAYMENTS_SERVICE_URL=${PAYMENTS_URL}@COMMERCE_SERVICE_URL=${COMMERCE_URL}@SHOPPING_AGENT_URL=${SHOPPING_URL}@BUYER_AGENT_URL=${BUYER_URL}" \
-  "MCP_API_KEY=relay-mcp-api-key:latest" \
+  "CLERK_SECRET_KEY=relay-clerk-secret-key:latest,MCP_API_KEY=relay-mcp-api-key:latest" \
   python "-m,agentic_broker.mcp.server"
 MCP_URL="$(
   gcloud run services describe mcp \

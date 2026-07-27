@@ -78,33 +78,58 @@ def _solana_wallet(user: dict[str, Any]) -> str:
     raise AuthenticationError("Clerk user has no verified Solana wallet")
 
 
-def verify_session_token(token: str) -> ClerkIdentity:
-    """Validate a Clerk JWT and resolve its verified Solana wallet."""
+def verify_token_claims(
+    token: str, *, required_claims: tuple[str, ...]
+) -> dict[str, Any]:
+    """Validate a Clerk JWT with the shared JWKS verifier.
+
+    Session and OAuth access tokens use the same Clerk issuer and signing keys,
+    but carry different required claims. Callers remain responsible for
+    checking the token type after this cryptographic verification.
+    """
     if not token or not settings.clerk_issuer:
         raise AuthenticationError("Clerk session is not configured")
     try:
         signing_key = _jwks_client().get_signing_key_from_jwt(token)
-        claims = jwt.decode(
+        return jwt.decode(
             token,
             signing_key.key,
             algorithms=["RS256"],
             issuer=settings.clerk_issuer,
             options={
-                "require": ["exp", "iss", "sid", "sub"],
+                "require": list(required_claims),
                 "verify_exp": True,
                 "verify_signature": True,
+                # OAuth clients are dynamically registered, so their client ID
+                # cannot be a static audience here. The MCP verifier checks the
+                # token against Clerk's OAuth access-token endpoint instead.
+                "verify_aud": False,
             },
         )
     except jwt.PyJWTError as exc:
         raise AuthenticationError("Invalid or expired Clerk session") from exc
 
+
+def resolve_identity(user_id: str, *, session_id: str = "") -> ClerkIdentity:
+    """Resolve a verified Clerk user's Solana wallet."""
+    user = _fetch_clerk_user(user_id)
+    return ClerkIdentity(
+        user_id=user_id,
+        session_id=session_id,
+        wallet_address=_solana_wallet(user),
+    )
+
+
+def verify_session_token(token: str) -> ClerkIdentity:
+    """Validate a Clerk session JWT and resolve its verified Solana wallet."""
+    claims = verify_token_claims(
+        token, required_claims=("exp", "iss", "sid", "sub")
+    )
     user_id = claims.get("sub")
     session_id = claims.get("sid", "")
     if not isinstance(user_id, str) or not user_id:
         raise AuthenticationError("Clerk session has no user")
-    user = _fetch_clerk_user(user_id)
-    return ClerkIdentity(
-        user_id=user_id,
+    return resolve_identity(
+        user_id,
         session_id=session_id if isinstance(session_id, str) else "",
-        wallet_address=_solana_wallet(user),
     )
