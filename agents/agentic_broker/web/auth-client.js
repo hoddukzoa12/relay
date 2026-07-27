@@ -442,7 +442,11 @@
         window.localStorage.setItem(this.telemetryKey(), JSON.stringify(entries));
       } catch {}
       try {
-        console.info("[Relay auth]", record);
+        // Kept out of the console by default so the storefront ships clean.
+        // Read the branch history from localStorage, or listen for the event.
+        if (window.localStorage.getItem("relay:auth-debug") === "1") {
+          console.info("[Relay auth]", record);
+        }
         window.dispatchEvent(new CustomEvent("relay:auth-branch", {
           detail: record,
         }));

@@ -1,3 +1,11 @@
+{% comment %}
+  The chat owns the whole first screen. Locking page scroll here rather than
+  inside the component, because the shadow root cannot reach <body>.
+{% endcomment %}
+<style>
+  body:has(.relay-agent-chat-section) { overflow: hidden; }
+  .relay-agent-chat-section { overflow: hidden; }
+</style>
 <section class="relay-agent-chat-section">
   <relay-agent-chat
     agent-base-url="{{ section.settings.agent_base_url | escape }}"
@@ -46,7 +54,9 @@
         --relay-soft: #e9e8e1;
         --relay-accent: #3157c8;
         display: block;
-        min-height: min(900px, calc(100vh - 70px));
+        /* The landing view is one screen: the page never scrolls, only the
+           conversation and the showcase rail do. */
+        height: var(--relay-viewport, calc(100dvh - 70px));
         color: var(--relay-ink);
         background: var(--relay-bg);
         font: 400 15px/1.45 Inter, "Helvetica Neue", Helvetica, Arial, system-ui, sans-serif;
@@ -65,7 +75,9 @@
         display: grid;
         grid-template-areas: "showcase chat";
         grid-template-columns: minmax(0, .96fr) minmax(0, 1.04fr);
-        min-height: min(900px, calc(100vh - 70px));
+        height: 100%;
+        min-height: 0;
+        overflow: hidden;
         border-top: 1px solid var(--relay-rule);
         border-bottom: 1px solid var(--relay-rule);
       }
@@ -857,14 +869,10 @@
 
       const copy = document.createElement("div");
       copy.className = "showcase-copy";
-      const kicker = document.createElement("span");
-      kicker.className = "showcase-kicker";
-      kicker.textContent = product.vendor || "Catalog";
       const title = document.createElement("h2");
+      // Supplier descriptions are raw spec dumps ("SPECIFICATIONS Brand Name:
+      // …"), so the slide shows the title and price only.
       title.textContent = product.title || "Untitled product";
-      const description = document.createElement("p");
-      description.textContent =
-        product.description || "Search, compare, and settle this live catalog item with Relay.";
       const facts = document.createElement("div");
       facts.className = "showcase-facts";
       const price = document.createElement("strong");
@@ -872,7 +880,7 @@
       const stock = document.createElement("span");
       stock.textContent = product.available ? "Available now" : "Currently unavailable";
       facts.append(price, stock);
-      copy.append(kicker, title, description, facts);
+      copy.append(title, facts);
       if (product.url || product.handle) {
         const link = document.createElement("a");
         link.className = "showcase-link";
