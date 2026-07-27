@@ -7,6 +7,9 @@ Format: [Keep a Changelog](https://keepachangelog.com/); versioning is SemVer-is
 ## [Unreleased]
 
 ### Added
+- Added an API-key-protected, stateless Streamable HTTP MCP server with seven
+  thin commerce/payment/lifecycle tools, a reproducible MCP client, and
+  scale-to-zero Cloud Run deployment wiring (#17).
 - Added the live four-service Cloud Run deployment in `us-central1`, with a
   public buyer console, IAM-authenticated backend calls, Secret Manager
   provisioning within the free allowance, and scale-to-zero cost controls (#2).

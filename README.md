@@ -59,6 +59,7 @@ agents/                 Python · Google ADK + Gemini
     common/             config · contracts · service clients · Gemini helpers
     buyer/              delegated buyer (+ demo web UI)  → :8090
     shopping/           broker agent                     → :8091
+    mcp/                remote Streamable HTTP MCP server → :8092
 services/               TypeScript
   payments/             Solana Pay: create request · sign · verify → :8081
   commerce/             Shopify Admin API (mock-able)            → :8082
@@ -86,6 +87,7 @@ wallets/                your solana keypairs (git-ignored)
 cp .env.example .env          # then edit — at minimum confirm USDC_MINT + wallet paths
 # For wallet identity, also set CLERK_PUBLISHABLE_KEY, CLERK_SECRET_KEY,
 # CLERK_ISSUER, and CLERK_JWKS_URL.
+# For remote MCP, generate MCP_API_KEY and keep it out of source control.
 
 # 2. Wallets (you already have these)
 mkdir -p wallets
@@ -111,14 +113,14 @@ pnpm seed:catalog
 **Option A — one command (Docker):**
 
 ```bash
-make compose-up               # payments, commerce, shopping, buyer
+make compose-up               # payments, commerce, shopping, buyer, MCP
 open http://localhost:8090    # demo console
 ```
 
 **Option B — local processes:**
 
 ```bash
-./scripts/dev.sh              # starts all four; buyer UI at http://localhost:8090
+./scripts/dev.sh              # starts all five; buyer UI at http://localhost:8090
 ```
 
 Then either click **"에이전트에게 구매 위임"** in the UI, or:
@@ -130,6 +132,45 @@ cd agents && ./.venv/bin/python -m agentic_broker.buyer.cli --query "wireless ea
 ```
 
 You get back a `txSignature` and an **explorer link** — the on-chain proof.
+
+### Remote MCP
+
+Relay is also an MCP server at `/mcp` using the production-oriented
+**Streamable HTTP** transport. It is not a local-only stdio adapter. Every MCP
+request must include `X-Relay-API-Key`; a missing or invalid key is rejected
+before tool discovery or execution.
+
+```json
+{
+  "mcpServers": {
+    "relay": {
+      "type": "http",
+      "url": "http://localhost:8092/mcp",
+      "headers": {
+        "X-Relay-API-Key": "${MCP_API_KEY}"
+      }
+    }
+  }
+}
+```
+
+List and validate all seven tools with the official Python MCP client:
+
+```bash
+MCP_API_KEY="$MCP_API_KEY" \
+  agents/.venv/bin/python scripts/mcp-client.py
+
+# Run quote → autonomous pay → settle → lookup, then refund:
+MCP_API_KEY="$MCP_API_KEY" \
+  agents/.venv/bin/python scripts/mcp-client.py --purchase --refund
+```
+
+The MCP tools are `search_products`, `request_quote`, `authorize_payment`,
+`settle`, `get_order_status`, `refund_order`, and `wallet_balances`. They are
+thin wrappers over the same shared service clients and deterministic workflow
+used by `/buy`; payment signing and on-chain verification are not duplicated.
+See [`docs/MCP.md`](docs/MCP.md) for tool inputs, authentication, remote client
+configuration, and deployment verification.
 
 ### Optional human wallet identity and delegation
 
@@ -230,6 +271,7 @@ Live deployment (`web3research`, `us-central1`):
 | commerce | https://commerce-763kssfe2q-uc.a.run.app | IAM only |
 | shopping | https://shopping-763kssfe2q-uc.a.run.app | IAM only |
 | buyer | **https://buyer-763kssfe2q-uc.a.run.app** | public demo |
+| mcp | assigned by the next approved deploy | public edge; API key required |
 
 To reproduce from the prepared `.env` and local throwaway wallets:
 
@@ -244,7 +286,8 @@ BUYER_AGENT_URL=https://buyer-763kssfe2q-uc.a.run.app \
 ```
 
 The deploy is hard-pinned to `us-central1`, uses scale-to-zero (no minimum
-instances), locks the three backend services behind IAM, and removes imported
+instances), locks the three backend services behind IAM, protects MCP tools
+with a Secret Manager-backed shared secret, and removes imported
 image copies from Artifact Registry to avoid ongoing storage cost. Wallet keys,
 Gemini, Shopify client credentials, and the Clerk secret are all supplied
 through Secret Manager—not plain environment flags. See
@@ -294,6 +337,10 @@ under three minutes.
 
 - Wallet keys and API tokens live only in `.env` / Secret Manager — never
   committed (`.gitignore` enforces this).
+- MCP is publicly routable for remote clients, but the complete protocol
+  endpoint (including tool discovery) fails closed unless `X-Relay-API-Key`
+  matches `relay-mcp-api-key`. Payments, commerce, and shopping remain private
+  behind Cloud Run IAM.
 - Payment, refund, and fulfillment compare-and-set state is process-local
   (in-memory); a restart forgets payment-service request state. Shopify custom
   attributes preserve completed ledger proofs, but Firestore/Redis is required

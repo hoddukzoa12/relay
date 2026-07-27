@@ -206,6 +206,23 @@ def a2a_settle(req: dict[str, Any]) -> dict[str, Any]:
     return _post(f"{settings.shopping_agent_url}/a2a/settle", req)
 
 
+def shopping_order(identifier: str) -> dict[str, Any]:
+    """Read an order through the shopping-agent lifecycle API."""
+    encoded = quote(identifier, safe="")
+    return _get(f"{settings.shopping_agent_url}/orders/{encoded}")
+
+
+def shopping_refund_order(identifier: str) -> dict[str, Any]:
+    """Refund an order through the shopping-agent lifecycle API."""
+    encoded = quote(identifier, safe="")
+    return _post(f"{settings.shopping_agent_url}/orders/{encoded}/refund", {})
+
+
+def buyer_wallet_balances() -> dict[str, Any]:
+    """Read display-only SOL/USDC balances from the buyer agent."""
+    return _get(f"{settings.buyer_agent_url}/wallet-balances")
+
+
 def a2a_message_send(
     data: dict[str, Any], *, context_id: Optional[str] = None
 ) -> dict[str, Any]:

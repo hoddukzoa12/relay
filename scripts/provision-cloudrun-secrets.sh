@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Create the five active Secret Manager versions used by the Cloud Run stack.
+# Create the six active Secret Manager versions used by the Cloud Run stack.
 # Existing secrets are left unchanged so a repeat does not create billable
 # versions. Rotate deliberately in the console or with `gcloud secrets versions`.
 set -euo pipefail
@@ -18,6 +18,7 @@ PROJECT_ID="${PROJECT_ID:-${GCP_PROJECT_ID:-}}"
 : "${SHOPIFY_CLIENT_ID:?SHOPIFY_CLIENT_ID is required in .env}"
 : "${SHOPIFY_CLIENT_SECRET:?SHOPIFY_CLIENT_SECRET is required in .env}"
 : "${CLERK_SECRET_KEY:?CLERK_SECRET_KEY is required in .env}"
+: "${MCP_API_KEY:?MCP_API_KEY is required in .env}"
 
 MERCHANT_KEYPAIR="${MERCHANT_WALLET_KEYPAIR_PATH:-wallets/merchant.json}"
 BUYER_KEYPAIR="${BUYER_WALLET_KEYPAIR_PATH:-wallets/buyer.json}"
@@ -44,5 +45,6 @@ create_secret_once relay-google-api-key "$GOOGLE_API_KEY"
 create_secret_once relay-shopify-client-id "$SHOPIFY_CLIENT_ID"
 create_secret_once relay-shopify-client-secret "$SHOPIFY_CLIENT_SECRET"
 create_secret_once relay-clerk-secret-key "$CLERK_SECRET_KEY"
+create_secret_once relay-mcp-api-key "$MCP_API_KEY"
 
-echo "Cloud Run secrets are ready (5 active versions; within the 6-version free tier)."
+echo "Cloud Run secrets are ready (6 active versions; within the free allowance)."

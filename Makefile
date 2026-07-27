@@ -6,7 +6,7 @@ SHELL := /bin/bash
 PYTHON ?= python3
 
 .PHONY: help setup setup-node setup-py env wallets \
-        dev-payments dev-commerce dev-shopping dev-buy \
+        dev-payments dev-commerce dev-shopping dev-mcp dev-buy \
         compose-up compose-down typecheck check-wallets demo clean
 
 help: ## Show this help
@@ -19,7 +19,7 @@ setup-node: ## Install TS workspace deps (pnpm)
 	pnpm install
 
 setup-py: ## Install Python agent deps into a venv
-	cd agents && $(PYTHON) -m venv .venv && ./.venv/bin/pip install -U pip && ./.venv/bin/pip install -e .
+	cd agents && $(PYTHON) -m venv .venv && ./.venv/bin/pip install -U pip && ./.venv/bin/pip install -e ".[test]"
 
 env: ## Create .env from template if missing
 	@test -f .env || (cp .env.example .env && echo "Created .env — fill it in.")
@@ -39,6 +39,9 @@ dev-commerce: ## Run the commerce service (TS)
 
 dev-shopping: ## Run the shopping (broker) agent (Python)
 	cd agents && ./.venv/bin/python -m agentic_broker.shopping.server
+
+dev-mcp: ## Run the streamable HTTP MCP server (requires MCP_API_KEY)
+	cd agents && ./.venv/bin/python -m agentic_broker.mcp.server
 
 dev-buy: ## Run a one-shot buyer purchase from the CLI (QUERY="wireless earbuds" BUDGET=30)
 	cd agents && ./.venv/bin/python -m agentic_broker.buyer.cli --query "$(QUERY)" --budget "$(BUDGET)"

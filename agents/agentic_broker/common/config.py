@@ -21,6 +21,9 @@ class Settings:
     buyer_agent_url: str = os.getenv("BUYER_AGENT_URL", "http://localhost:8090")
     buyer_port: int = int(os.getenv("BUYER_PORT", "8090"))
     shopping_port: int = int(os.getenv("SHOPPING_PORT", "8091"))
+    mcp_port: int = int(os.getenv("MCP_PORT", "8092"))
+    mcp_api_key: str = os.getenv("MCP_API_KEY", "")
+    mcp_cors_origins: str = os.getenv("MCP_CORS_ORIGINS", "*")
 
     google_api_key: str = os.getenv("GOOGLE_API_KEY", "")
     gemini_model: str = os.getenv("GEMINI_MODEL", "gemini-2.5-flash")
