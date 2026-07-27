@@ -26,7 +26,7 @@ after changing `.env`; CORS settings are loaded at process startup.
 
 ## 2. Run Relay and expose the buyer agent over HTTPS
 
-Start the four-service stack:
+Start the five-service stack:
 
 ```bash
 ./scripts/dev.sh
@@ -82,6 +82,11 @@ The widget source is
 [`agents/agentic_broker/web/widget.html`](../agents/agentic_broker/web/widget.html).
 It contains its markup, styles, and JavaScript, needs no build step, and uses a
 Shadow DOM so theme styles do not leak into the widget.
+
+The live preview is installed in the duplicate Shopify theme
+**Horizon + Relay Agent (preview)** (theme ID `204473499934`) as
+`sections/relay-agent-buy.liquid`. It points to the public buyer API at
+`https://buyer-1018608922006.us-central1.run.app`.
 
 ### Fastest: paste the file directly
 
@@ -180,5 +185,6 @@ reintroduce human checkout approval and break the autonomous payment path.
 8. Open **View explorer ↗**, then **My orders**, to show the devnet proof and
    the Shopify order filtered by the signed-in wallet.
 
-The standalone buyer console at `http://localhost:8090` remains the fallback if
-the Shopify theme or tunnel is unavailable.
+The Shopify storefront widget is the browser demo surface. If the theme or
+tunnel is unavailable, restore it rather than pointing users at the buyer
+service root; the buyer service exposes APIs only.

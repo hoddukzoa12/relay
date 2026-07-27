@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Build and deploy the four Relay services to scale-to-zero Cloud Run.
+# Build and deploy the five Relay services to scale-to-zero Cloud Run.
 set -euo pipefail
 cd "$(dirname "$0")/.."
 
@@ -17,6 +17,9 @@ if [[ "$REGION" != "us-central1" ]]; then
   echo "Refusing REGION=${REGION}: Relay must use us-central1 for the Cloud Run free tier." >&2
   exit 2
 fi
+PROJECT_NUMBER="$(
+  gcloud projects describe "$PROJECT_ID" --format='value(projectNumber)'
+)"
 
 required_vars=(
   SOLANA_RPC_URL
@@ -47,6 +50,7 @@ PAYMENTS_SA="relay-payments@${PROJECT_ID}.iam.gserviceaccount.com"
 COMMERCE_SA="relay-commerce@${PROJECT_ID}.iam.gserviceaccount.com"
 SHOPPING_SA="relay-shopping@${PROJECT_ID}.iam.gserviceaccount.com"
 BUYER_SA="relay-buyer@${PROJECT_ID}.iam.gserviceaccount.com"
+MCP_SA="relay-mcp@${PROJECT_ID}.iam.gserviceaccount.com"
 
 ensure_service_account() {
   local short_name="$1"
@@ -64,6 +68,7 @@ ensure_service_account relay-payments "Relay payments runtime"
 ensure_service_account relay-commerce "Relay commerce runtime"
 ensure_service_account relay-shopping "Relay shopping runtime"
 ensure_service_account relay-buyer "Relay buyer runtime"
+ensure_service_account relay-mcp "Relay MCP runtime"
 
 if ! gcloud artifacts repositories describe "$AR_REPOSITORY" \
   --project "$PROJECT_ID" \
@@ -106,6 +111,7 @@ grant_secret_access relay-shopify-client-secret "$COMMERCE_SA"
 grant_secret_access relay-google-api-key "$SHOPPING_SA"
 grant_secret_access relay-google-api-key "$BUYER_SA"
 grant_secret_access relay-clerk-secret-key "$BUYER_SA"
+grant_secret_access relay-mcp-api-key "$MCP_SA"
 
 COMMON_ENV=(
   "SOLANA_RPC_URL=${SOLANA_RPC_URL}"
@@ -232,6 +238,8 @@ grant_invoker payments "$SHOPPING_SA"
 grant_invoker payments "$BUYER_SA"
 grant_invoker commerce "$SHOPPING_SA"
 grant_invoker commerce "$BUYER_SA"
+grant_invoker payments "$MCP_SA"
+grant_invoker commerce "$MCP_SA"
 
 deploy_service \
   shopping "$AGENTS_IMAGE" 8091 "$SHOPPING_SA" private \
@@ -242,6 +250,7 @@ SHOPPING_URL="$(
     --project "$PROJECT_ID" --region "$REGION" --format='value(status.url)'
 )"
 grant_invoker shopping "$BUYER_SA"
+grant_invoker shopping "$MCP_SA"
 
 deploy_service \
   buyer "$AGENTS_IMAGE" 8090 "$BUYER_SA" public \
@@ -252,12 +261,35 @@ BUYER_URL="$(
   gcloud run services describe buyer \
     --project "$PROJECT_ID" --region "$REGION" --format='value(status.url)'
 )"
+BUYER_PROJECT_URL="https://buyer-${PROJECT_NUMBER}.${REGION}.run.app"
+BUYER_CORS_ORIGINS_DEPLOYED="https://${SHOPIFY_STORE_DOMAIN},${BUYER_URL},${BUYER_PROJECT_URL}"
+if [[ -n "${BUYER_CORS_ORIGINS:-}" ]]; then
+  BUYER_CORS_ORIGINS_DEPLOYED="${BUYER_CORS_ORIGINS_DEPLOYED},${BUYER_CORS_ORIGINS}"
+fi
 
 gcloud run services update buyer \
   --project "$PROJECT_ID" \
   --region "$REGION" \
   --update-env-vars \
-  "^@^BUYER_CORS_ORIGINS=https://${SHOPIFY_STORE_DOMAIN},${BUYER_URL}@BUYER_AGENT_URL=${BUYER_URL}" \
+  "^@^BUYER_CORS_ORIGINS=${BUYER_CORS_ORIGINS_DEPLOYED}@BUYER_AGENT_URL=${BUYER_URL}" \
+  --quiet
+
+deploy_service \
+  mcp "$AGENTS_IMAGE" 8092 "$MCP_SA" public \
+  "MCP_PORT=8092@MCP_CORS_ORIGINS=${MCP_CORS_ORIGINS:-*}@MCP_ALLOWED_HOSTS=mcp-${PROJECT_NUMBER}.${REGION}.run.app@MCP_ALLOWED_ORIGINS=${MCP_ALLOWED_ORIGINS:-http://localhost:*,http://127.0.0.1:*}@PAYMENTS_SERVICE_URL=${PAYMENTS_URL}@COMMERCE_SERVICE_URL=${COMMERCE_URL}@SHOPPING_AGENT_URL=${SHOPPING_URL}@BUYER_AGENT_URL=${BUYER_URL}" \
+  "MCP_API_KEY=relay-mcp-api-key:latest" \
+  python "-m,agentic_broker.mcp.server"
+MCP_URL="$(
+  gcloud run services describe mcp \
+    --project "$PROJECT_ID" --region "$REGION" --format='value(status.url)'
+)"
+MCP_PROJECT_HOST="mcp-${PROJECT_NUMBER}.${REGION}.run.app"
+MCP_STATUS_HOST="${MCP_URL#https://}"
+gcloud run services update mcp \
+  --project "$PROJECT_ID" \
+  --region "$REGION" \
+  --update-env-vars \
+  "^@^MCP_ALLOWED_HOSTS=${MCP_PROJECT_HOST},${MCP_STATUS_HOST}@MCP_ALLOWED_ORIGINS=${MCP_ALLOWED_ORIGINS:-http://localhost:*,http://127.0.0.1:*}" \
   --quiet
 
 # Cloud Run imports each deployed image. Delete the Artifact Registry copies so
@@ -285,13 +317,15 @@ Relay is deployed in ${REGION} with scale-to-zero:
   payments  ${PAYMENTS_URL}  (IAM-authenticated)
   commerce  ${COMMERCE_URL}  (IAM-authenticated)
   shopping  ${SHOPPING_URL}  (IAM-authenticated)
-  buyer     ${BUYER_URL}  (public demo)
+  buyer     ${BUYER_URL}  (public API)
+  mcp       ${MCP_URL}/mcp  (public edge; X-Relay-API-Key required)
 
 Runtime service accounts:
   payments  ${PAYMENTS_SA}
   commerce  ${COMMERCE_SA}
   shopping  ${SHOPPING_SA}
   buyer     ${BUYER_SA}
+  mcp       ${MCP_SA}
 
 No --min-instances setting is used. Artifact Registry image copies were
 cleanup-enabled=${CLEANUP_IMAGES:-true}; Cloud Run retains the imported revisions.

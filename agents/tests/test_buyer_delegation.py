@@ -12,6 +12,11 @@ class BuyerDelegationTest(unittest.TestCase):
     def setUp(self) -> None:
         self.client = TestClient(server.app)
 
+    def test_console_root_is_not_served(self) -> None:
+        response = self.client.get("/")
+
+        self.assertEqual(response.status_code, 404)
+
     def test_agent_only_buy_stays_public(self) -> None:
         result = {"ok": True, "confirmation": {"status": "paid"}}
         with patch.object(server.flow, "buy", return_value=result) as buy:

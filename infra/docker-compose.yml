@@ -53,3 +53,19 @@ services:
     depends_on: [payments, shopping]
     ports:
       - "8090:8090"
+
+  mcp:
+    build:
+      context: ../agents
+      dockerfile: Dockerfile
+    env_file: ../.env
+    environment:
+      MCP_PORT: 8092
+      PAYMENTS_SERVICE_URL: http://payments:8081
+      COMMERCE_SERVICE_URL: http://commerce:8082
+      SHOPPING_AGENT_URL: http://shopping:8091
+      BUYER_AGENT_URL: http://buyer:8090
+    command: ["python", "-m", "agentic_broker.mcp.server"]
+    depends_on: [payments, commerce, shopping, buyer]
+    ports:
+      - "8092:8092"

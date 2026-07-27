@@ -1,7 +1,7 @@
 """Deterministic end-to-end purchase flow for the buyer agent.
 
 quote (A2A) -> autonomous sign (payments) -> settle (A2A). Returns a trace so
-the demo UI can show every step, including the on-chain explorer link.
+callers can show every step, including the on-chain explorer link.
 """
 from __future__ import annotations
 
