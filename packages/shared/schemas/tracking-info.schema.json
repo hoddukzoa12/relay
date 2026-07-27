@@ -1,0 +1,34 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://relay.example/schemas/tracking-info.schema.json",
+  "title": "TrackingInfo",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "provider",
+    "carrier",
+    "trackingNumber",
+    "status",
+    "statusDetail",
+    "trackingUrl",
+    "estimatedDeliveryAt",
+    "demo",
+    "message"
+  ],
+  "properties": {
+    "provider": { "const": "easypost" },
+    "carrier": { "type": "string", "minLength": 1 },
+    "trackingNumber": { "type": "string", "minLength": 1 },
+    "status": { "type": "string", "minLength": 1 },
+    "statusDetail": { "type": ["string", "null"] },
+    "trackingUrl": {
+      "oneOf": [
+        { "type": "string", "format": "uri" },
+        { "type": "null" }
+      ]
+    },
+    "estimatedDeliveryAt": { "type": ["string", "null"] },
+    "demo": { "type": "boolean" },
+    "message": { "type": "string", "minLength": 1 }
+  }
+}

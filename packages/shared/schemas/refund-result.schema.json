@@ -1,0 +1,64 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://relay.example/schemas/refund-result.schema.json",
+  "title": "RefundResult",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "shopifyOrderId",
+    "orderRef",
+    "name",
+    "status",
+    "financialStatus",
+    "amount",
+    "payment",
+    "refund",
+    "replayed"
+  ],
+  "properties": {
+    "shopifyOrderId": { "type": "string" },
+    "orderRef": { "type": "string" },
+    "name": { "type": "string" },
+    "status": { "const": "refunded" },
+    "financialStatus": { "const": "REFUNDED" },
+    "amount": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["amount", "currency"],
+      "properties": {
+        "amount": {
+          "type": "string",
+          "pattern": "^\\d+(\\.\\d{1,6})?$"
+        },
+        "currency": { "const": "USDC" }
+      }
+    },
+    "payment": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["reference", "txSignature", "explorer"],
+      "properties": {
+        "reference": {
+          "type": ["string", "null"],
+          "minLength": 1
+        },
+        "txSignature": { "type": "string", "minLength": 1 },
+        "explorer": { "type": "string", "format": "uri" }
+      }
+    },
+    "refund": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["reference", "txSignature", "explorer"],
+      "properties": {
+        "reference": {
+          "type": ["string", "null"],
+          "minLength": 1
+        },
+        "txSignature": { "type": "string", "minLength": 1 },
+        "explorer": { "type": "string", "format": "uri" }
+      }
+    },
+    "replayed": { "type": "boolean" }
+  }
+}

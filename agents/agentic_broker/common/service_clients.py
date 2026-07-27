@@ -10,7 +10,7 @@ from functools import lru_cache
 import logging
 from threading import Lock
 from typing import Any, Optional
-from urllib.parse import urlsplit
+from urllib.parse import quote, urlsplit
 from uuid import uuid4
 
 import httpx
@@ -115,6 +115,13 @@ def payments_verify(reference: str) -> dict[str, Any]:
     return _post(f"{settings.payments_url}/verify", {"reference": reference})
 
 
+def payments_refund(order_ref: str, reference: str) -> dict[str, Any]:
+    return _post(
+        f"{settings.payments_url}/refunds",
+        {"orderRef": order_ref, "reference": reference},
+    )
+
+
 def payments_wallets() -> dict[str, Any]:
     return _get(f"{settings.payments_url}/wallets")
 
@@ -156,6 +163,38 @@ def commerce_orders(buyer_address: str) -> dict[str, Any]:
         f"{settings.commerce_url}/orders",
         {"buyerAddress": buyer_address},
     )
+
+
+def commerce_order(identifier: str) -> dict[str, Any]:
+    encoded = quote(identifier, safe="")
+    return _get(f"{settings.commerce_url}/orders/{encoded}")
+
+
+def commerce_refund_order(
+    order_ref: str,
+    refund_reference: str,
+    refund_tx_signature: str,
+    refund_explorer: str,
+) -> dict[str, Any]:
+    encoded = quote(order_ref, safe="")
+    return _post(
+        f"{settings.commerce_url}/orders/{encoded}/refund",
+        {
+            "refundReference": refund_reference,
+            "refundTxSignature": refund_tx_signature,
+            "refundExplorer": refund_explorer,
+        },
+    )
+
+
+def commerce_fulfill_order(order_ref: str) -> dict[str, Any]:
+    encoded = quote(order_ref, safe="")
+    return _post(f"{settings.commerce_url}/orders/{encoded}/fulfill", {})
+
+
+def commerce_track_order(identifier: str) -> dict[str, Any]:
+    encoded = quote(identifier, safe="")
+    return _get(f"{settings.commerce_url}/orders/{encoded}/tracking")
 
 
 # --- peer agent (A2A over HTTP) ---------------------------------------------

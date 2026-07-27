@@ -1,0 +1,139 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://relay.example/schemas/order-status.schema.json",
+  "title": "OrderStatus",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "shopifyOrderId",
+    "orderRef",
+    "name",
+    "financialStatus",
+    "fulfillmentStatus",
+    "lineItems",
+    "amount",
+    "payment",
+    "refund",
+    "tracking"
+  ],
+  "properties": {
+    "shopifyOrderId": { "type": "string" },
+    "orderRef": { "type": "string" },
+    "name": { "type": "string" },
+    "financialStatus": { "type": "string" },
+    "fulfillmentStatus": { "type": "string" },
+    "lineItems": {
+      "type": "array",
+      "minItems": 1,
+      "items": { "$ref": "#/$defs/orderLineItem" }
+    },
+    "amount": { "$ref": "#/$defs/money" },
+    "payment": { "$ref": "#/$defs/paymentProof" },
+    "refund": { "$ref": "#/$defs/refundState" },
+    "tracking": {
+      "oneOf": [
+        { "$ref": "#/$defs/trackingInfo" },
+        { "type": "null" }
+      ]
+    }
+  },
+  "$defs": {
+    "money": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["amount", "currency"],
+      "properties": {
+        "amount": {
+          "type": "string",
+          "pattern": "^\\d+(\\.\\d{1,6})?$"
+        },
+        "currency": { "const": "USDC" }
+      }
+    },
+    "orderLineItem": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["title", "sku", "quantity"],
+      "properties": {
+        "title": { "type": "string" },
+        "sku": { "type": "string" },
+        "quantity": { "type": "integer", "minimum": 1 }
+      }
+    },
+    "onChainProof": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["txSignature", "explorer"],
+      "properties": {
+        "txSignature": { "type": "string", "minLength": 1 },
+        "explorer": { "type": "string", "format": "uri" }
+      }
+    },
+    "paymentProof": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["reference", "txSignature", "explorer"],
+      "properties": {
+        "reference": {
+          "type": ["string", "null"],
+          "minLength": 1
+        },
+        "txSignature": { "type": "string", "minLength": 1 },
+        "explorer": { "type": "string", "format": "uri" }
+      }
+    },
+    "refundState": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["status", "reference", "txSignature", "explorer"],
+      "properties": {
+        "status": { "enum": ["not_refunded", "refunded"] },
+        "reference": {
+          "type": ["string", "null"],
+          "minLength": 1
+        },
+        "txSignature": {
+          "type": ["string", "null"],
+          "minLength": 1
+        },
+        "explorer": {
+          "oneOf": [
+            { "type": "string", "format": "uri" },
+            { "type": "null" }
+          ]
+        }
+      }
+    },
+    "trackingInfo": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "provider",
+        "carrier",
+        "trackingNumber",
+        "status",
+        "statusDetail",
+        "trackingUrl",
+        "estimatedDeliveryAt",
+        "demo",
+        "message"
+      ],
+      "properties": {
+        "provider": { "const": "easypost" },
+        "carrier": { "type": "string", "minLength": 1 },
+        "trackingNumber": { "type": "string", "minLength": 1 },
+        "status": { "type": "string", "minLength": 1 },
+        "statusDetail": { "type": ["string", "null"] },
+        "trackingUrl": {
+          "oneOf": [
+            { "type": "string", "format": "uri" },
+            { "type": "null" }
+          ]
+        },
+        "estimatedDeliveryAt": { "type": ["string", "null"] },
+        "demo": { "type": "boolean" },
+        "message": { "type": "string", "minLength": 1 }
+      }
+    }
+  }
+}

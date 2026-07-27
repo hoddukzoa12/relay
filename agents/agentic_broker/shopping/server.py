@@ -16,15 +16,20 @@ from ..common.contracts import (
     INTENT_MANDATE_DATA_KEY,
     PAYMENT_MANDATE_DATA_KEY,
     CartMandate,
+    FulfillmentResult,
     IntentMandate,
     OrderConfirmation,
+    OrderStatus,
     PaymentMandate,
     PaymentRequest,
     PurchaseIntent,
+    RefundResult,
     SettlementRequest,
+    TrackingInfo,
 )
 from ..common.mandates import verify_wallet_signature
 from . import broker
+from . import tools
 
 app = FastAPI(title="Shopping Broker Agent", version="0.1.0")
 _LOG = logging.getLogger(__name__)
@@ -311,6 +316,46 @@ def settle(req: SettlementRequest) -> OrderConfirmation:
         return broker.handle_settle(req)
     except broker.FulfillmentPendingError as exc:
         raise HTTPException(status_code=503, detail=str(exc)) from exc
+
+
+@app.get("/orders/{identifier}", response_model=OrderStatus)
+def order_status(identifier: str) -> OrderStatus:
+    try:
+        return OrderStatus(**tools.get_order_status(identifier))
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+    except Exception as exc:  # noqa: BLE001
+        raise HTTPException(status_code=502, detail=str(exc)) from exc
+
+
+@app.post("/orders/{identifier}/refund", response_model=RefundResult)
+def refund_order(identifier: str) -> RefundResult:
+    try:
+        return RefundResult(**tools.refund_order(identifier))
+    except ValueError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+    except Exception as exc:  # noqa: BLE001
+        raise HTTPException(status_code=502, detail=str(exc)) from exc
+
+
+@app.post("/orders/{order_ref}/fulfill", response_model=FulfillmentResult)
+def fulfill_order(order_ref: str) -> FulfillmentResult:
+    try:
+        return FulfillmentResult(**tools.fulfill_order(order_ref))
+    except ValueError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+    except Exception as exc:  # noqa: BLE001
+        raise HTTPException(status_code=502, detail=str(exc)) from exc
+
+
+@app.get("/orders/{identifier}/tracking", response_model=TrackingInfo)
+def tracking(identifier: str) -> TrackingInfo:
+    try:
+        return TrackingInfo(**tools.track_order(identifier))
+    except ValueError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+    except Exception as exc:  # noqa: BLE001
+        raise HTTPException(status_code=502, detail=str(exc)) from exc
 
 
 def main() -> None:

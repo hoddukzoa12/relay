@@ -28,4 +28,7 @@ export const config = {
     currency: process.env.SHOPIFY_CURRENCY ?? "USD",
   },
   cluster: process.env.SOLANA_CLUSTER ?? "devnet",
+  tracking: {
+    easypostApiKey: process.env.EASYPOST_API_KEY ?? "",
+  },
 };

@@ -9,7 +9,16 @@ from __future__ import annotations
 from google.adk.agents import LlmAgent
 
 from ..common.config import settings
-from .tools import issue_payment_request, record_order, source_and_price, verify_payment
+from .tools import (
+    fulfill_order,
+    get_order_status,
+    issue_payment_request,
+    record_order,
+    refund_order,
+    source_and_price,
+    track_order,
+    verify_payment,
+)
 
 INSTRUCTION = """\
 You are the SHOPPING BROKER — a headless merchant agent. A buyer agent asks you
@@ -28,6 +37,10 @@ to source a product within a budget. Your job:
 4. Call `record_order` with the same `variantId` as `product_id` and the `sku`
    returned by `source_and_price`, plus the verified payment and fulfillment
    fields. Then confirm with the explorer link.
+5. For post-purchase requests, use `get_order_status`, `fulfill_order`,
+   `track_order`, and `refund_order`. A refund is full-only and must return both
+   payment and refund explorer proofs. Tracking values are demo-only; never
+   claim that Relay shipped a real parcel.
 
 Be concise. Never invent a transaction signature or claim payment you did not
 verify on-chain.
@@ -38,5 +51,14 @@ root_agent = LlmAgent(
     name="shopping_broker",
     description="Sources products, issues USDC payment requests, verifies on-chain payments, records Shopify orders.",
     instruction=INSTRUCTION,
-    tools=[source_and_price, issue_payment_request, verify_payment, record_order],
+    tools=[
+        source_and_price,
+        issue_payment_request,
+        verify_payment,
+        record_order,
+        get_order_status,
+        refund_order,
+        fulfill_order,
+        track_order,
+    ],
 )

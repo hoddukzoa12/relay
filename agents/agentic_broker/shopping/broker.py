@@ -179,6 +179,7 @@ def handle_settle(
             amount=order.amount,
             buyer_address=buyer_wallet,
             ship_to=order.ship_to,
+            payment_reference=order.reference,
             tx_signature=order.paid_tx_signature or req.txSignature,
             explorer=order.explorer or "",
         )
