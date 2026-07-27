@@ -1454,11 +1454,17 @@
           await this.maybeResumePendingPurchase();
           return;
         }
-        if (this.authBranch === "shopify_return_fallback") {
+        // Clerk first. A shopper who signed in through Shopify already has a
+        // Clerk session — it is just invisible to this origin — so the Clerk
+        // redirect returns immediately and establishes it. Sending them to
+        // Shopify's login first only bounces them back and costs a click.
+        try {
           await this.authClient.openFallbackSignIn();
-        } else {
-          await this.authClient.signInViaShopify(this.shopifyLoginUrl);
+          return;
+        } catch (ssoError) {
+          this.authError = this.errorMessage(ssoError);
         }
+        await this.authClient.signInViaShopify(this.shopifyLoginUrl);
       } catch (error) {
         this.appendMessage("agent", this.errorMessage(error));
       } finally {
