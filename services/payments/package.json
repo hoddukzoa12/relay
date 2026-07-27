@@ -8,7 +8,8 @@
     "start": "tsx src/server.ts",
     "test": "node --import tsx --test src/*.test.ts",
     "typecheck": "tsc --noEmit",
-    "check-wallets": "tsx src/check-wallets.ts"
+    "check-wallets": "tsx src/check-wallets.ts",
+    "evidence:delegation": "tsx src/devnet-delegation-evidence.ts"
   },
   "dependencies": {
     "@arb/shared": "workspace:*",

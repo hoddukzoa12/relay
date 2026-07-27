@@ -81,16 +81,27 @@ carried as A2A **DataParts**, keyed by type, e.g.
 
 | Mandate | Signed by | Contains (modeled on `ap2.types.mandate`) |
 |---|---|---|
-| **IntentMandate** | human identity wallet (or buyer agent on the compatibility path) | `natural_language_description`, `merchants?`, `skus?`, `requires_refundability?`, price ceiling, `intent_expiry`, `user_cart_confirmation_required` |
+| **IntentMandate** | buyer agent, attesting the Clerk identity + on-chain SPL approval (agent-only compatibility path omits delegation fields) | `natural_language_description`, price ceiling, `intent_expiry`, plus `delegator`, `delegateAuthority`, `allowanceRemaining`, `approvalTxSignature` on the web path |
 | **CartMandate** | **merchant** (shopping) | `contents`: real catalog cart_items `[{sku,variant_id,name,price}]`, `total`, `currency`, shipping/tax, `refund_period`, `cart_expiry`, `merchant_name` |
 | **PaymentMandate** | user (buyer) | payment method token, `amount`+`currency`, `merchant_name`, payer info, `timestamp`; bound to the Cart/Intent mandate |
 
-**Delegated flow (ours):** a signed-in human wallet signs one IntentMandate with
-a price limit and expiry up front → merchant returns a signed CartMandate when
-conditions are met → the separate buyer-agent wallet issues a PaymentMandate
-and settles **without further user interaction**. On direct agent/API calls the
-buyer-agent wallet also signs the IntentMandate, preserving the human-absent
-compatibility path.
+**Human-present web flow:** Clerk resolves the verified Solana wallet → that
+wallet signs one SPL Token `Approve`, setting the buyer-agent wallet as delegate
+with a fixed USDC limit → the buyer agent records the approval transaction and a
+live allowance snapshot in its IntentMandate → the merchant returns a signed
+CartMandate → the buyer agent issues a PaymentMandate and spends directly from
+the human wallet's USDC ATA as delegate. The agent remains transaction fee payer,
+so the user needs no SOL and sees zero wallet prompts on later purchases.
+
+The allowance SSOT is always the token account. Immediately before every web
+transfer, `payments` calls `getAccount(sourceAta)` and checks the owner,
+delegate, delegated amount, and USDC balance. A signed mandate snapshot never
+authorizes money by itself. Revoke or an exhausted/insufficient allowance blocks
+the purchase with a reapproval message.
+
+**Human-absent agent flow:** MCP, A2A, CLI, and legacy `/buy` calls omit
+`delegator`; the configured buyer-agent wallet remains source, signer, and fee
+payer. This compatibility path retains zero human clicks.
 
 > Align exact field names to the reference types in
 > `google-agentic-commerce/AP2` (`src/ap2/types/mandate.py`) at implementation time.
@@ -121,7 +132,7 @@ also Base, Polygon. → an HTTP wrapper over the same USDC-on-Solana we already 
 
 | Current (REST) | A2A/AP2 target |
 |---|---|
-| `PurchaseIntent {query,budget,shipTo}` | **IntentMandate** (buyer-signed; `budget` = price ceiling) |
+| `PurchaseIntent {query,budget,shipTo}` | **IntentMandate** (buyer-signed; web mandates also bind the Clerk wallet's SPL delegation proof) |
 | `PaymentRequest {title,price,payTo,reference}` | **CartMandate** (merchant-signed) |
 | buyer autonomous pay authorization | **PaymentMandate** (buyer-signed) → settled via Solana Pay tx (guaranteed) or x402 (#6) |
 | `POST /a2a/quote`, `/a2a/settle` (REST) | JSON-RPC `message/send` with mandate **DataParts** (add endpoint; keep REST for compat) |

@@ -178,6 +178,48 @@ export const AP2_MANDATE_DATA_KEYS = {
   payment: "ap2.mandates.PaymentMandate",
 } as const;
 
+/**
+ * Browser-present SPL Token delegation proof.
+ *
+ * `allowanceRemaining` is a signed snapshot for the AP2 audit trail only. The
+ * payments service always re-reads the token account immediately before spend;
+ * no application-side allowance ledger is authoritative.
+ */
+export const TokenDelegationSchema = z.object({
+  delegator: z.string(),
+  delegateAuthority: z.string(),
+  allowanceRemaining: MoneySchema,
+  approvalTxSignature: z.string().min(1),
+});
+export type TokenDelegation = z.infer<typeof TokenDelegationSchema>;
+
+/** Current on-chain delegation state returned to an authenticated storefront. */
+export const DelegationStatusSchema = z.object({
+  active: z.boolean(),
+  delegator: z.string(),
+  delegateAuthority: z.string(),
+  allowanceRemaining: MoneySchema,
+  balance: MoneySchema,
+  sourceTokenAccount: z.string(),
+  usdcMint: z.string(),
+  network: z.enum(NETWORKS),
+});
+export type DelegationStatus = z.infer<typeof DelegationStatusSchema>;
+
+/** Partially signed transaction prepared for the user's one wallet approval. */
+export const DelegationTransactionSchema = z.object({
+  action: z.enum(["approve", "revoke"]),
+  delegator: z.string(),
+  delegateAuthority: z.string(),
+  allowanceRemaining: MoneySchema,
+  transaction: z.string().min(1),
+  blockhash: z.string().min(1),
+  lastValidBlockHeight: z.number().int().positive(),
+});
+export type DelegationTransaction = z.infer<
+  typeof DelegationTransactionSchema
+>;
+
 export const IntentMandateSchema = z.object({
   user_cart_confirmation_required: z.boolean(),
   natural_language_description: z.string(),
@@ -190,6 +232,12 @@ export const IntentMandateSchema = z.object({
   // Human identity wallet for browser-delegated intents. Omitted by the
   // retained agent-only path, whose configured buyer wallet signs the intent.
   signer_wallet: z.string().optional(),
+  // SPL Token delegation proof. These are omitted together on the retained
+  // autonomous agent-wallet compatibility path.
+  delegator: z.string().optional(),
+  delegateAuthority: z.string().optional(),
+  allowanceRemaining: MoneySchema.optional(),
+  approvalTxSignature: z.string().min(1).optional(),
   signature: z.string().min(1),
 });
 export type IntentMandate = z.infer<typeof IntentMandateSchema>;

@@ -80,7 +80,17 @@ def _post(
         headers=headers,
         timeout=_TIMEOUT,
     )
-    resp.raise_for_status()
+    try:
+        resp.raise_for_status()
+    except httpx.HTTPStatusError as exc:
+        try:
+            payload = resp.json()
+            detail = payload.get("error") or payload.get("detail")
+        except (ValueError, AttributeError):
+            detail = None
+        raise RuntimeError(
+            str(detail or f"Service request failed with HTTP {resp.status_code}")
+        ) from exc
     return resp.json()
 
 
@@ -93,7 +103,17 @@ def _get(
         headers=_cloud_run_auth_headers(url),
         timeout=_TIMEOUT,
     )
-    resp.raise_for_status()
+    try:
+        resp.raise_for_status()
+    except httpx.HTTPStatusError as exc:
+        try:
+            payload = resp.json()
+            detail = payload.get("error") or payload.get("detail")
+        except (ValueError, AttributeError):
+            detail = None
+        raise RuntimeError(
+            str(detail or f"Service request failed with HTTP {resp.status_code}")
+        ) from exc
     return resp.json()
 
 
@@ -112,10 +132,19 @@ def payments_create_request(
     return _post(f"{settings.payments_url}/payment-requests", body)
 
 
-def payments_pay(pay_to: str, amount: str, reference: str) -> dict[str, Any]:
+def payments_pay(
+    pay_to: str,
+    amount: str,
+    reference: str,
+    *,
+    delegator: Optional[str] = None,
+) -> dict[str, Any]:
+    body = {"payTo": pay_to, "amount": amount, "reference": reference}
+    if delegator:
+        body["delegator"] = delegator
     return _post(
         f"{settings.payments_url}/pay",
-        {"payTo": pay_to, "amount": amount, "reference": reference},
+        body,
     )
 
 
@@ -132,6 +161,37 @@ def payments_refund(order_ref: str, reference: str) -> dict[str, Any]:
 
 def payments_wallets() -> dict[str, Any]:
     return _get(f"{settings.payments_url}/wallets")
+
+
+def payments_delegation_status(delegator: str) -> dict[str, Any]:
+    """Read live SPL delegate state for one server-verified wallet."""
+    return _post(
+        f"{settings.payments_url}/delegations/status",
+        {"delegator": delegator},
+    )
+
+
+def payments_verify_delegation(
+    delegator: str, approval_tx_signature: str
+) -> dict[str, Any]:
+    """Verify the approval transaction and return current on-chain state."""
+    return _post(
+        f"{settings.payments_url}/delegations/verify",
+        {
+            "delegator": delegator,
+            "approvalTxSignature": approval_tx_signature,
+        },
+    )
+
+
+def payments_prepare_delegation(
+    delegator: str, action: str, amount: Optional[str] = None
+) -> dict[str, Any]:
+    """Prepare an agent-fee-paid approve/revoke transaction for the user."""
+    body: dict[str, Any] = {"delegator": delegator, "action": action}
+    if amount is not None:
+        body["amount"] = amount
+    return _post(f"{settings.payments_url}/delegations/transactions", body)
 
 
 def payments_sign_mandate(

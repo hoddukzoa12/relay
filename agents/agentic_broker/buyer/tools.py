@@ -1,6 +1,9 @@
 """Buyer-agent tools — shared by the ADK agent and the deterministic flow."""
 from __future__ import annotations
 
+from contextlib import contextmanager
+from contextvars import ContextVar
+from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 from decimal import Decimal, InvalidOperation, ROUND_HALF_UP
 import logging
@@ -23,6 +26,81 @@ _PAYMENT_REQUEST_DATA_KEY = "relay.payment.PaymentRequest"
 _ORDER_CONFIRMATION_DATA_KEY = "relay.payment.OrderConfirmation"
 _SETTLEMENT_REQUEST_DATA_KEY = "relay.payment.SettlementRequest"
 _MERCHANT_NAME = "Relay Shopping Broker"
+
+
+@dataclass(frozen=True)
+class StorefrontContext:
+    """Server-owned identity for one human-present storefront request."""
+
+    identity_wallet: str | None
+    approval_tx_signature: str | None
+
+
+_STOREFRONT_CONTEXT: ContextVar[StorefrontContext | None] = ContextVar(
+    "relay_storefront_context", default=None
+)
+
+
+@contextmanager
+def storefront_context(
+    identity_wallet: str | None,
+    approval_tx_signature: str | None,
+):
+    """Mark one call chain as storefront-originated without global state."""
+    token = _STOREFRONT_CONTEXT.set(
+        StorefrontContext(identity_wallet, approval_tx_signature)
+    )
+    try:
+        yield
+    finally:
+        _STOREFRONT_CONTEXT.reset(token)
+
+
+def _storefront_intent(
+    query: str, budget: float, ship_to: str
+) -> dict[str, Any] | None:
+    context = _STOREFRONT_CONTEXT.get()
+    if context is None:
+        return None
+    if not context.identity_wallet:
+        raise PermissionError(
+            "Clerk wallet sign-in is required before request_quote or payment."
+        )
+    if not context.approval_tx_signature:
+        raise PermissionError(
+            "Approve a USDC spending limit once before requesting a payment quote."
+        )
+
+    status = service_clients.payments_verify_delegation(
+        context.identity_wallet, context.approval_tx_signature
+    )
+    if status.get("delegator") != context.identity_wallet:
+        raise PermissionError("Delegation identity did not match the Clerk wallet.")
+    if not status.get("active"):
+        raise PermissionError(
+            "SPL delegation is missing or revoked; approve the broker again."
+        )
+    allowance = Decimal(str(status["allowanceRemaining"]["amount"]))
+    if Decimal(str(budget)) > allowance:
+        raise PermissionError(
+            f"Requested budget {budget:.2f} USDC exceeds the on-chain delegated "
+            f"allowance {allowance} USDC; approve a higher limit."
+        )
+
+    return {
+        "user_cart_confirmation_required": False,
+        "natural_language_description": query,
+        "requires_refundability": False,
+        "price_ceiling": {"amount": f"{budget:.2f}", "currency": "USDC"},
+        "ship_to": ship_to,
+        "intent_expiry": (
+            datetime.now(timezone.utc) + timedelta(minutes=15)
+        ).isoformat(),
+        "delegator": context.identity_wallet,
+        "delegateAuthority": status["delegateAuthority"],
+        "allowanceRemaining": status["allowanceRemaining"],
+        "approvalTxSignature": context.approval_tx_signature,
+    }
 
 
 def search_catalog(
@@ -131,7 +209,7 @@ def request_quote(
     Returns the PaymentRequest dict.
     """
     if delegated_intent is None:
-        unsigned_intent = {
+        unsigned_intent = _storefront_intent(query, budget, ship_to) or {
             "user_cart_confirmation_required": False,
             "natural_language_description": query,
             "requires_refundability": False,
@@ -192,15 +270,16 @@ def authorize_payment(
     intent = mandates[INTENT_MANDATE_DATA_KEY]
     cart = mandates[CART_MANDATE_DATA_KEY]
     wallets = service_clients.payments_wallets()
+    payer_wallet = intent.get("delegator") or wallets["buyer"]
     unsigned_payment = {
         "payment_mandate_contents": {
             "payment_mandate_id": f"pm_{uuid4()}",
             "payment_details_id": cart["contents"]["id"],
-            "payment_method_token": f"solana:{wallets['buyer']}",
+            "payment_method_token": f"solana:{payer_wallet}",
             "amount": {"amount": amount, "currency": "USDC"},
             "merchant_name": cart["contents"].get("merchant_name", _MERCHANT_NAME),
             "payer": {
-                "wallet_address": wallets["buyer"],
+                "wallet_address": payer_wallet,
                 "ship_to": intent.get("ship_to"),
             },
             "timestamp": datetime.now(timezone.utc).isoformat(),
@@ -212,7 +291,12 @@ def authorize_payment(
 
     # The Solana Pay payload is deliberately unchanged; AP2 authorization wraps
     # the existing autonomous /pay call rather than replacing it.
-    payment = service_clients.payments_pay(pay_to, amount, reference)
+    payment = service_clients.payments_pay(
+        pay_to,
+        amount,
+        reference,
+        delegator=intent.get("delegator"),
+    )
     return {
         **payment,
         "ap2Mandates": {PAYMENT_MANDATE_DATA_KEY: payment_mandate},

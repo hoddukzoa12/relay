@@ -29,7 +29,12 @@ def test_chat_endpoint_preserves_caller_session_id() -> None:
 
     assert response.status_code == 200
     assert response.json() == expected
-    respond.assert_called_once_with("session_12345678", "I need earbuds")
+    respond.assert_called_once_with(
+        "session_12345678",
+        "I need earbuds",
+        identity_wallet=None,
+        approval_tx_signature=None,
+    )
 
 
 def test_chat_rejects_invalid_session_ids_without_running_agent() -> None:
@@ -99,6 +104,48 @@ def test_missing_gemini_key_uses_deterministic_catalog_fallback() -> None:
     assert response["products"][0]["inventoryQuantity"] == 7
     assert response["toolCalls"] == ["search_catalog"]
     search.assert_called_once_with("earbuds under 5 USDC", 5.0)
+
+
+def test_anonymous_fallback_chat_can_search_but_cannot_buy() -> None:
+    service = conversation.ConversationService()
+    product = {
+        "title": "Earbuds",
+        "price": "2.30",
+        "inventoryQuantity": 7,
+    }
+    catalog = {
+        "query": "earbuds under 5 USDC",
+        "budget": "5.0",
+        "currency": "USDC",
+        "products": [product],
+        "closestOverBudget": [],
+    }
+    fallback_settings = SimpleNamespace(
+        google_api_key="",
+        default_ship_to="Seoul",
+    )
+    with (
+        patch.object(conversation, "settings", fallback_settings),
+        patch.object(
+            conversation.buyer_tools,
+            "search_catalog",
+            return_value=catalog,
+        ),
+        patch.object(
+            conversation.flow,
+            "buy",
+            side_effect=PermissionError("Clerk wallet sign-in is required."),
+        ) as buy,
+    ):
+        searched = service.respond(
+            "anonymous_session", "earbuds under 5 USDC"
+        )
+        blocked = service.respond("anonymous_session", "buy it")
+
+    assert searched["products"] == [product]
+    assert blocked["paymentBlocked"] is True
+    assert "sign-in is required" in blocked["reply"]
+    buy.assert_called_once()
 
 
 def test_partial_agent_failure_never_sends_payment_twice() -> None:

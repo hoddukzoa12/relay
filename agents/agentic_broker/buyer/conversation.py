@@ -89,9 +89,21 @@ class ConversationService:
         self._session_locks: dict[str, Lock] = {}
         self._fallback_states: dict[str, _FallbackState] = {}
 
-    def respond(self, session_id: str, message: str) -> dict[str, Any]:
+    def respond(
+        self,
+        session_id: str,
+        message: str,
+        *,
+        identity_wallet: str | None = None,
+        approval_tx_signature: str | None = None,
+    ) -> dict[str, Any]:
         """Return model text plus structured products/payment progress."""
-        with self._session_lock(session_id):
+        with (
+            self._session_lock(session_id),
+            buyer_tools.storefront_context(
+                identity_wallet, approval_tx_signature
+            ),
+        ):
             if not settings.google_api_key:
                 return self._fallback_response(
                     session_id,
@@ -286,11 +298,25 @@ class ConversationService:
         if state.products and self._is_purchase_request(normalized):
             product = self._fallback_selection(message, state.products)
             ship_to = self._shipping_address(message)
-            result = flow.buy(
-                query=str(product["title"]),
-                budget=state.budget,
-                ship_to=ship_to,
-            )
+            try:
+                result = flow.buy(
+                    query=str(product["title"]),
+                    budget=state.budget,
+                    ship_to=ship_to,
+                )
+            except PermissionError as exc:
+                return {
+                    "sessionId": session_id,
+                    "reply": (
+                        f"{exc} Catalog search and comparison remain available "
+                        "without payment authorization."
+                    ),
+                    "mode": "fallback",
+                    "fallbackReason": reason[:240],
+                    "toolCalls": [],
+                    "products": state.products,
+                    "paymentBlocked": True,
+                }
             quote = result.get("quote", {})
             confirmation = result.get("confirmation", {})
             if result.get("ok"):
@@ -411,6 +437,17 @@ class ConversationService:
 _SERVICE = ConversationService()
 
 
-def respond(session_id: str, message: str) -> dict[str, Any]:
+def respond(
+    session_id: str,
+    message: str,
+    *,
+    identity_wallet: str | None = None,
+    approval_tx_signature: str | None = None,
+) -> dict[str, Any]:
     """Process one chat turn through the process-wide conversation service."""
-    return _SERVICE.respond(session_id, message)
+    return _SERVICE.respond(
+        session_id,
+        message,
+        identity_wallet=identity_wallet,
+        approval_tx_signature=approval_tx_signature,
+    )

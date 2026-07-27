@@ -154,6 +154,40 @@ class PaymentRequest(BaseModel):
     solanaPayUrl: Optional[str] = None
 
 
+class TokenDelegation(BaseModel):
+    """SPL delegation proof embedded in a browser-present AP2 intent."""
+
+    delegator: str
+    delegateAuthority: str
+    allowanceRemaining: Money
+    approvalTxSignature: str = Field(min_length=1)
+
+
+class DelegationStatus(BaseModel):
+    """Current on-chain SPL delegation state; never an application ledger."""
+
+    active: bool
+    delegator: str
+    delegateAuthority: str
+    allowanceRemaining: Money
+    balance: Money
+    sourceTokenAccount: str
+    usdcMint: str
+    network: Network
+
+
+class DelegationTransaction(BaseModel):
+    """Agent-fee-paid transaction awaiting the delegator's one signature."""
+
+    action: Literal["approve", "revoke"]
+    delegator: str
+    delegateAuthority: str
+    allowanceRemaining: Money
+    transaction: str = Field(min_length=1)
+    blockhash: str = Field(min_length=1)
+    lastValidBlockHeight: int = Field(gt=0)
+
+
 class IntentMandate(BaseModel):
     """AP2 buyer authorization for an autonomous purchase intent."""
 
@@ -168,6 +202,10 @@ class IntentMandate(BaseModel):
     # Present when a signed-in human delegates; absent on the legacy agent-only
     # path, where the configured payments buyer wallet remains the signer.
     signer_wallet: Optional[str] = None
+    delegator: Optional[str] = None
+    delegateAuthority: Optional[str] = None
+    allowanceRemaining: Optional[Money] = None
+    approvalTxSignature: Optional[str] = Field(default=None, min_length=1)
     signature: str = Field(min_length=1)
 
 

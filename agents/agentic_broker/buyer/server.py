@@ -5,7 +5,7 @@ import os
 from datetime import datetime, timezone
 from decimal import Decimal
 from pathlib import Path
-from typing import Any, Optional
+from typing import Any, Literal, Optional
 
 import httpx
 from fastapi import FastAPI, Header, HTTPException
@@ -18,7 +18,7 @@ from ..common.agent_cards import buyer_agent_card
 from ..common.config import settings
 from ..common.contracts import IntentMandate
 from ..common.mandates import verify_wallet_signature
-from . import auth, conversation, flow
+from . import auth, conversation, flow, tools as buyer_tools
 
 
 def _cors_origins() -> list[str]:
@@ -54,6 +54,7 @@ class BuyRequest(BaseModel):
     budget: Optional[float] = None
     shipTo: Optional[str] = None
     intentMandate: Optional[IntentMandate] = None
+    approvalTxSignature: Optional[str] = Field(default=None, min_length=1)
 
 
 class ChatRequest(BaseModel):
@@ -63,6 +64,14 @@ class ChatRequest(BaseModel):
         pattern=r"^[A-Za-z0-9][A-Za-z0-9_-]+$",
     )
     message: str = Field(min_length=1, max_length=1000)
+    approvalTxSignature: Optional[str] = Field(default=None, min_length=1)
+
+
+class DelegationTransactionRequest(BaseModel):
+    action: Literal["approve", "revoke"]
+    amount: Optional[str] = Field(
+        default=None, pattern=r"^\d+(\.\d{1,6})?$"
+    )
 
 
 @app.get("/health")
@@ -110,6 +119,14 @@ def _identity(authorization: Optional[str]) -> auth.ClerkIdentity:
         raise HTTPException(status_code=401, detail=str(exc)) from exc
 
 
+def _optional_identity(
+    authorization: Optional[str],
+) -> auth.ClerkIdentity | None:
+    if not authorization:
+        return None
+    return _identity(authorization)
+
+
 @app.get("/auth/me")
 def auth_me(authorization: Optional[str] = Header(default=None)) -> dict[str, str]:
     identity = _identity(authorization)
@@ -125,6 +142,34 @@ def my_orders(authorization: Optional[str] = Header(default=None)) -> dict[str, 
     return service_clients.commerce_orders(identity.wallet_address)
 
 
+@app.get("/delegation")
+def delegation(
+    authorization: Optional[str] = Header(default=None),
+) -> dict[str, Any]:
+    """Return only the Clerk wallet's live on-chain SPL delegation."""
+    identity = _identity(authorization)
+    status = service_clients.payments_delegation_status(identity.wallet_address)
+    if status.get("delegator") != identity.wallet_address:
+        raise HTTPException(status_code=502, detail="Delegation identity mismatch")
+    return status
+
+
+@app.post("/delegation/transaction")
+def delegation_transaction(
+    body: DelegationTransactionRequest,
+    authorization: Optional[str] = Header(default=None),
+) -> dict[str, Any]:
+    """Prepare a transaction for the verified Clerk wallet, never client input."""
+    identity = _identity(authorization)
+    if body.action == "approve" and body.amount is None:
+        raise HTTPException(status_code=422, detail="Approval amount is required")
+    return service_clients.payments_prepare_delegation(
+        identity.wallet_address,
+        body.action,
+        body.amount,
+    )
+
+
 @app.get("/wallets")
 def wallets() -> dict[str, Any]:
     try:
@@ -134,12 +179,21 @@ def wallets() -> dict[str, Any]:
 
 
 @app.post("/chat")
-def chat(body: ChatRequest) -> dict[str, Any]:
+def chat(
+    body: ChatRequest,
+    authorization: Optional[str] = Header(default=None),
+) -> dict[str, Any]:
     """Run one multi-turn ADK buyer-agent turn for a storefront session."""
     message = body.message.strip()
     if not message:
         raise HTTPException(status_code=422, detail="message must not be blank")
-    return conversation.respond(body.sessionId, message)
+    identity = _optional_identity(authorization)
+    return conversation.respond(
+        body.sessionId,
+        message,
+        identity_wallet=identity.wallet_address if identity else None,
+        approval_tx_signature=body.approvalTxSignature,
+    )
 
 
 def _decimal_units(amount: int, decimals: int) -> str:
@@ -287,6 +341,35 @@ def buy(
         intent_mandate=body.intentMandate,
         identity_wallet=identity.wallet_address if identity else None,
     )
+
+
+@app.post("/web/buy")
+def web_buy(
+    body: BuyRequest,
+    authorization: Optional[str] = Header(default=None),
+) -> dict[str, Any]:
+    """Human-present storefront path: Clerk + live SPL delegation are mandatory."""
+    identity = _identity(authorization)
+    if not body.approvalTxSignature:
+        raise HTTPException(
+            status_code=409,
+            detail="Approve a USDC spending limit before purchasing",
+        )
+
+    try:
+        with buyer_tools.storefront_context(
+            identity.wallet_address, body.approvalTxSignature
+        ):
+            if body.text:
+                return flow.buy_from_text(body.text)
+            return flow.buy(
+                query=body.query or "wireless earbuds",
+                budget=body.budget if body.budget is not None else 30.0,
+                ship_to=body.shipTo or settings.default_ship_to,
+                identity_wallet=identity.wallet_address,
+            )
+    except PermissionError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
 
 
 def main() -> None:

@@ -32,6 +32,7 @@ import {
   withFailover,
 } from "./solana.js";
 import { store, type StoredRequest } from "./store.js";
+import { delegatedSourceAccount } from "./delegation.js";
 
 const CLUSTER = config.cluster;
 const VERIFY_TIMEOUT_MS = 20_000;
@@ -197,6 +198,8 @@ export interface PayInput {
   payTo: string;
   amount: string;
   reference: string;
+  /** Clerk-verified human wallet. Omitted on autonomous MCP/A2A/CLI calls. */
+  delegator?: string;
 }
 
 async function submitPayment(
@@ -210,16 +213,23 @@ async function submitPayment(
   try {
     await assertUsdcDecimals();
 
-    // Ensure both sides have a USDC token account (buyer funds any creation).
-    const buyerAta = await ensureAta(buyer, buyer.publicKey);
+    // A human-present payment spends from the Clerk-verified user's ATA with
+    // the buyer agent as SPL delegate. Agent-native calls omit `delegator` and
+    // retain the original buyer-wallet source with zero human clicks.
+    const amount = toBaseUnits(input.amount);
+    const sourceTokenAccount = input.delegator
+      ? await delegatedSourceAccount(input.delegator, amount)
+      : (await ensureAta(buyer, buyer.publicKey)).address;
+
+    // The agent remains fee payer and funds recipient ATA creation.
     const recipientAta = await ensureAta(buyer, recipient);
 
     const ix = createTransferCheckedInstruction(
-      buyerAta.address,
+      sourceTokenAccount,
       usdcMint,
       recipientAta.address,
       buyer.publicKey,
-      toBaseUnits(input.amount),
+      amount,
       usdcDecimals,
     );
     // The Solana Pay "reference": a non-signer, read-only key that tags the tx so
