@@ -261,7 +261,7 @@ export type PaymentStatusT = (typeof PaymentStatus)[number];
 
 /**
  * Step 11 — shopping agent → buyer agent: the final order confirmation.
- * (Also the shape returned by the buyer's /buy endpoint to the demo UI.)
+ * (Also the shape returned by the buyer's /buy endpoint to the Shopify widget.)
  */
 export const OrderConfirmationSchema = z.object({
   orderRef: z.string(),

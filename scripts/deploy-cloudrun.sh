@@ -301,7 +301,7 @@ Relay is deployed in ${REGION} with scale-to-zero:
   payments  ${PAYMENTS_URL}  (IAM-authenticated)
   commerce  ${COMMERCE_URL}  (IAM-authenticated)
   shopping  ${SHOPPING_URL}  (IAM-authenticated)
-  buyer     ${BUYER_URL}  (public demo)
+  buyer     ${BUYER_URL}  (public API)
   mcp       ${MCP_URL}/mcp  (public edge; X-Relay-API-Key required)
 
 Runtime service accounts:

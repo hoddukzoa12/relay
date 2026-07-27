@@ -7,7 +7,7 @@ Two agents plus one remote protocol adapter, in one installable package
 agentic_broker/
   common/      config, contracts (PRD §6 mirror), service clients, Gemini helpers
   shopping/    broker: source → price → issue request → verify → record order
-  buyer/       delegated buyer: quote → autonomous sign → settle  (+ demo web UI)
+  buyer/       delegated buyer API: quote → autonomous sign → settle
   mcp/         Streamable HTTP tools over the same buyer/common primitives
 ```
 
@@ -34,7 +34,7 @@ python -m venv .venv && ./.venv/bin/pip install -e .
 
 # servers (need the TS payments/commerce services up — see repo README)
 python -m agentic_broker.shopping.server   # :8091
-python -m agentic_broker.buyer.server      # :8090  → open http://localhost:8090
+python -m agentic_broker.buyer.server      # :8090 API for the Shopify widget
 MCP_API_KEY=local-secret \
   python -m agentic_broker.mcp.server       # :8092/mcp
 

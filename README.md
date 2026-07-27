@@ -57,7 +57,7 @@ PRD §5, the data contracts are PRD §6.
 agents/                 Python · Google ADK + Gemini
   agentic_broker/
     common/             config · contracts · service clients · Gemini helpers
-    buyer/              delegated buyer (+ demo web UI)  → :8090
+    buyer/              delegated buyer API              → :8090
     shopping/           broker agent                     → :8091
     mcp/                remote Streamable HTTP MCP server → :8092
 services/               TypeScript
@@ -114,16 +114,17 @@ pnpm seed:catalog
 
 ```bash
 make compose-up               # payments, commerce, shopping, buyer, MCP
-open http://localhost:8090    # demo console
+curl http://localhost:8090/health
 ```
 
 **Option B — local processes:**
 
 ```bash
-./scripts/dev.sh              # starts all five; buyer UI at http://localhost:8090
+./scripts/dev.sh              # starts all five; buyer API at http://localhost:8090
 ```
 
-Then either click **"에이전트에게 구매 위임"** in the UI, or:
+Use the Shopify storefront widget for the browser demo, or exercise the
+autonomous agent path directly:
 
 ```bash
 ./scripts/demo.sh "wireless earbuds" 25
@@ -174,7 +175,7 @@ configuration, and deployment verification.
 
 ### Optional human wallet identity and delegation
 
-The console and Shopify widget can add a human identity without making sign-in
+The Shopify widget can add a human identity without making sign-in
 mandatory for agents:
 
 1. Select **Wallet sign-in**. Clerk performs Sign in with Solana and also acts
@@ -270,7 +271,7 @@ Live deployment (`web3research`, `us-central1`):
 | payments | https://payments-763kssfe2q-uc.a.run.app | IAM only |
 | commerce | https://commerce-763kssfe2q-uc.a.run.app | IAM only |
 | shopping | https://shopping-763kssfe2q-uc.a.run.app | IAM only |
-| buyer | **https://buyer-763kssfe2q-uc.a.run.app** | public demo |
+| buyer | **https://buyer-763kssfe2q-uc.a.run.app** | public API |
 | mcp | assigned by the next approved deploy | public edge; API key required |
 
 To reproduce from the prepared `.env` and local throwaway wallets:

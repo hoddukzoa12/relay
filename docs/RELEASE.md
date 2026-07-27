@@ -10,7 +10,7 @@ demoable cut of `main`**. Releases are cut from `main` after CI is green.
 | `v0.1.0-spine` | Leg 1 devnet USDC round-trip live | #1 merged · real explorer tx · CI green | ~7/28 |
 | `v0.2.0-commerce-protocol` | Real Shopify orders + A2A/AP2 alignment | #8, #9 merged | ~7/31 |
 | `v0.3.0-cloud` | Cloud Run live URL, services wired | #2 merged · buyer URL loads · e2e on deploy | ~8/1 |
-| `v0.9.0-rc` | Feature-complete, demo UI polished | #3 merged (·#4/#6 if time) | ~8/2 |
+| `v0.9.0-rc` | Feature-complete, storefront widget polished | #3 merged (·#4/#6 if time) | ~8/2 |
 | `v1.0.0-submission` | **Hackathon submission cut** | PRD §12 DoD all ✓ · demo video · README repro | **8/3 23:59 KST** |
 | `v1.1.0-demoday` | Demo Day build | rehearsed · RPC failover tested | 8/21 |
 

@@ -17,8 +17,9 @@ Full spec: [`PRD.md`](./PRD.md) · workflow: [`docs/WORKFLOW.md`](./docs/WORKFLO
 
 ## Architecture
 - `agents/` — Python (Google ADK + Gemini). One package `agentic_broker`:
-  `common/` (config · contracts · service clients · llm), `buyer/` (:8090, serves
-  the demo UI), `shopping/` (:8091, the broker).
+  `common/` (config · contracts · service clients · llm), `buyer/` (:8090,
+  public API for the Shopify widget), `shopping/` (:8091, the broker), and
+  `mcp/` (:8092, authenticated Streamable HTTP adapter).
 - `services/` — TypeScript, run via **tsx (no build step)**. `payments/` (:8081,
   `@solana/web3.js` + `@solana/pay`), `commerce/` (:8082, Shopify, mock-able).
 - `packages/shared/` — **canonical contracts** (PRD §6). Source of truth.
@@ -41,7 +42,7 @@ Full spec: [`PRD.md`](./PRD.md) · workflow: [`docs/WORKFLOW.md`](./docs/WORKFLO
 make setup            # pnpm install + python venv (agents/.venv)
 pnpm seed:catalog     # idempotently seed/publish the live Shopify demo catalog
 make check-wallets    # SOL (fees) + USDC balances for both wallets
-./scripts/dev.sh      # all four services; buyer UI at http://localhost:8090
+./scripts/dev.sh      # all five services; buyer API health at http://localhost:8090/health
 ./scripts/demo.sh "wireless earbuds" 5
 pnpm -r typecheck     # TS typecheck (must stay green)
 ```

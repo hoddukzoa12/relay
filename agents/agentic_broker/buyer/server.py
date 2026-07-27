@@ -1,4 +1,4 @@
-"""Buyer agent — serves the demo UI and a /buy endpoint that runs the flow."""
+"""Buyer agent API used by the Shopify widget and autonomous clients."""
 from __future__ import annotations
 
 import os
@@ -10,7 +10,7 @@ from typing import Any, Optional
 import httpx
 from fastapi import FastAPI, Header, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import HTMLResponse, Response
+from fastapi.responses import Response
 from pydantic import BaseModel
 
 from ..common import service_clients
@@ -45,7 +45,6 @@ app.add_middleware(
     max_age=600,
 )
 
-_WEB_INDEX = Path(__file__).resolve().parents[1] / "web" / "index.html"
 _WEB_AUTH_CLIENT = Path(__file__).resolve().parents[1] / "web" / "auth-client.js"
 
 
@@ -66,13 +65,6 @@ def health() -> dict[str, object]:
 @app.get("/a2a/agent-card")
 def agent_card() -> dict[str, Any]:
     return buyer_agent_card()
-
-
-@app.get("/", response_class=HTMLResponse)
-def home() -> str:
-    if _WEB_INDEX.exists():
-        return _WEB_INDEX.read_text(encoding="utf-8")
-    return "<h1>Agentic Resell Broker</h1><p>Demo UI missing.</p>"
 
 
 @app.get("/auth-client.js")

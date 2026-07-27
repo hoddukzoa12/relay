@@ -26,7 +26,7 @@ echo
 echo "  payments  http://localhost:8081/health"
 echo "  commerce  http://localhost:8082/health"
 echo "  shopping  http://localhost:8091/health"
-echo "  buyer UI  http://localhost:8090   ← open this"
+echo "  buyer API http://localhost:8090/health"
 echo "  MCP       http://localhost:8092/mcp (X-Relay-API-Key required)"
 echo
 wait

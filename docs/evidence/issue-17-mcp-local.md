@@ -27,6 +27,9 @@ settle
 wallet_balances
 ```
 
+The buyer service root now returns `404`; the service retains its public API
+routes, while the Shopify widget is the only browser demo surface.
+
 ## Full MCP money lifecycle
 
 One `scripts/mcp-client.py --purchase --refund` invocation completed quote,
@@ -68,7 +71,7 @@ pnpm -r typecheck
   services/commerce: passed
 
 agents/.venv/bin/python -m pytest -q agents/tests
-  24 passed
+  25 passed
 
 bash -n scripts/deploy-cloudrun.sh \
   scripts/provision-cloudrun-secrets.sh scripts/dev.sh

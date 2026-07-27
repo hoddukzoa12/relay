@@ -11,11 +11,11 @@ Format: [Keep a Changelog](https://keepachangelog.com/); versioning is SemVer-is
   thin commerce/payment/lifecycle tools, a reproducible MCP client, and
   scale-to-zero Cloud Run deployment wiring (#17).
 - Added the live four-service Cloud Run deployment in `us-central1`, with a
-  public buyer console, IAM-authenticated backend calls, Secret Manager
+  public buyer API, IAM-authenticated backend calls, Secret Manager
   provisioning within the free allowance, and scale-to-zero cost controls (#2).
 - Added an idempotent Shopify catalog seed for nine demo electronics, live
   catalog search, and published/inventory readback evidence (#25).
-- Added Clerk Sign in with Solana to the buyer console and Shopify widget,
+- Added Clerk Sign in with Solana to the Shopify widget and buyer API,
   cached-JWKS session verification, one-signature human AP2 delegation, and
   signed-in-wallet Shopify order lookup (#29).
 - Added the agent-owned post-purchase lifecycle: single-order status lookup,
@@ -60,7 +60,7 @@ Format: [Keep a Changelog](https://keepachangelog.com/); versioning is SemVer-is
   TypeScript services `payments` (@solana/web3.js + @solana/pay) + `commerce`
   (Shopify, mock-able); `packages/shared` canonical contracts (PRD §6).
 - Solana Pay flow: create payment request · autonomous buyer pay · on-chain
-  verify by `reference`. Demo web UI served by the buyer agent.
+  verify by `reference`. Autonomous `/buy` API served by the buyer agent.
 - Docs: `PRD.md`, `AGENTS.md` / `CLAUDE.md`, `docs/WORKFLOW.md`,
   `docs/PROTOCOLS.md` (A2A / AP2 / x402).
 - Governance: CI (typecheck + py-compile), PR template, CODEOWNERS,
