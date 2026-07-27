@@ -17,6 +17,10 @@ from ..common.contracts import (
 )
 from . import tools as buyer_tools
 
+CHAT_REQUEST_STATE = "relay:chat_request"
+CHAT_IDENTITY_WALLET_STATE = "relay:chat_identity_wallet"
+CHAT_APPROVAL_SIGNATURE_STATE = "relay:chat_approval_tx_signature"
+
 INSTRUCTION = """\
 You are Relay, a conversational BUYER agent acting for a human. You have
 multi-turn memory and must use tools for every catalog, payment, and order fact.
@@ -62,6 +66,65 @@ progress supplied by the API.
 """
 
 
+def payment_gate_response(
+    identity_wallet: str | None,
+    approval_signature: str | None,
+    *,
+    chat_request: bool = True,
+) -> dict[str, Any] | None:
+    """Build an executable refusal for an unverified storefront principal."""
+    if not chat_request or not identity_wallet:
+        return {
+            "status": "auth-required",
+            "authRequired": True,
+            "paymentBlocked": True,
+            "reason": (
+                "A verified Clerk session is required before storefront "
+                "quotes, payments, or settlement. Sign in to buy; catalog "
+                "search and comparison remain available."
+            ),
+            "action": "sign-in",
+        }
+    if not approval_signature:
+        return {
+            "status": "approval-required",
+            "authRequired": False,
+            "paymentBlocked": True,
+            "reason": (
+                "Approve a USDC spending limit from the verified Clerk wallet "
+                "before requesting a payment quote."
+            ),
+            "action": "approve-delegation",
+        }
+    return None
+
+
+def _payment_gate(
+    tool_context: ToolContext,
+) -> tuple[str, str] | dict[str, Any]:
+    """Return the server-verified chat principal or an executable refusal.
+
+    ``Runner.run`` executes tools on a background thread, so a ContextVar set by
+    the FastAPI request thread is not a security boundary.  The conversation
+    runner copies only server-derived values into ADK session state for each
+    turn; every spending-capable tool checks those values before doing any work.
+    """
+    wallet = str(
+        tool_context.state.get(CHAT_IDENTITY_WALLET_STATE, "")
+    ).strip()
+    approval_signature = str(
+        tool_context.state.get(CHAT_APPROVAL_SIGNATURE_STATE, "")
+    ).strip()
+    refusal = payment_gate_response(
+        wallet,
+        approval_signature,
+        chat_request=bool(tool_context.state.get(CHAT_REQUEST_STATE)),
+    )
+    if refusal:
+        return refusal
+    return wallet, approval_signature
+
+
 def search_catalog(
     query: str,
     budget: float,
@@ -89,6 +152,11 @@ def request_quote(
     phone: str = "",
 ) -> dict[str, Any]:
     """Request an agent-native quote for an explicitly selected product."""
+    principal = _payment_gate(tool_context)
+    if isinstance(principal, dict):
+        return principal
+    identity_wallet, approval_signature = principal
+
     required = {
         "shipping_name": shipping_name,
         "address1": address1,
@@ -114,12 +182,18 @@ def request_quote(
         phone=phone.strip() or None,
     )
     ship_to = format_shipping_address(shipping_address)
-    quote = buyer_tools.request_quote(
-        query,
-        budget,
-        ship_to,
-        shipping_address=shipping_address,
-    )
+    # Re-establish the storefront context in the ADK tool thread.  This keeps
+    # the delegation proof check local to the call that can issue a quote.
+    with buyer_tools.storefront_context(
+        identity_wallet, approval_signature
+    ):
+        quote = buyer_tools.request_quote(
+            query,
+            budget,
+            ship_to,
+            delegator=identity_wallet,
+            shipping_address=shipping_address,
+        )
     quoted_amount = Decimal(str(quote["price"]["amount"]))
     ceiling = Decimal(str(budget))
     if quoted_amount > ceiling:
@@ -142,6 +216,11 @@ def authorize_payment(
     tool_context: ToolContext,
 ) -> dict[str, Any]:
     """Autonomously sign the exact in-session quote after budget validation."""
+    principal = _payment_gate(tool_context)
+    if isinstance(principal, dict):
+        return principal
+    identity_wallet, _ = principal
+
     quote = tool_context.state.get("relay:last_quote")
     budget = tool_context.state.get("relay:last_budget")
     if not isinstance(quote, dict) or budget is None:
@@ -160,6 +239,7 @@ def authorize_payment(
         amount,
         reference,
         quote.get("ap2Mandates"),
+        delegator=identity_wallet,
     )
     tool_context.state["relay:last_payment"] = payment
     return payment
@@ -172,6 +252,10 @@ def confirm_settlement(
     tool_context: ToolContext,
 ) -> dict[str, Any]:
     """Verify the exact in-session payment and record the Shopify order."""
+    principal = _payment_gate(tool_context)
+    if isinstance(principal, dict):
+        return principal
+
     quote = tool_context.state.get("relay:last_quote")
     payment = tool_context.state.get("relay:last_payment")
     if not isinstance(quote, dict) or not isinstance(payment, dict):

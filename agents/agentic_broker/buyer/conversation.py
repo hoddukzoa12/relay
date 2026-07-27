@@ -19,10 +19,21 @@ from ..common.contracts import (
 )
 from . import flow
 from . import tools as buyer_tools
-from .agent import root_agent
+from .agent import (
+    CHAT_APPROVAL_SIGNATURE_STATE,
+    CHAT_IDENTITY_WALLET_STATE,
+    CHAT_REQUEST_STATE,
+    payment_gate_response,
+    root_agent,
+)
 
 _LOG = logging.getLogger(__name__)
 _APP_NAME = "relay_buyer_chat"
+_PAYMENT_TOOL_NAMES = (
+    "request_quote",
+    "authorize_payment",
+    "confirm_settlement",
+)
 
 
 @dataclass
@@ -116,9 +127,16 @@ class ConversationService:
                     session_id,
                     message,
                     reason="GOOGLE_API_KEY is not configured",
+                    identity_wallet=identity_wallet,
+                    approval_tx_signature=approval_tx_signature,
                 )
             try:
-                trace = self._run_agent(session_id, message)
+                trace = self._run_agent(
+                    session_id,
+                    message,
+                    identity_wallet=identity_wallet,
+                    approval_tx_signature=approval_tx_signature,
+                )
                 if not trace.reply:
                     raise AgentTurnError(
                         RuntimeError("Gemini returned no final response"), trace
@@ -135,21 +153,37 @@ class ConversationService:
                         session_id=session_id,
                         trace=exc.trace,
                         reason=str(exc.cause),
+                        identity_wallet=identity_wallet,
                     )
                 return self._fallback_response(
-                    session_id, message, reason=str(exc.cause)
+                    session_id,
+                    message,
+                    reason=str(exc.cause),
+                    identity_wallet=identity_wallet,
+                    approval_tx_signature=approval_tx_signature,
                 )
             except Exception as exc:  # noqa: BLE001
                 _LOG.warning("[chat] Gemini unavailable; using fallback: %s", exc)
                 return self._fallback_response(
-                    session_id, message, reason=str(exc)
+                    session_id,
+                    message,
+                    reason=str(exc),
+                    identity_wallet=identity_wallet,
+                    approval_tx_signature=approval_tx_signature,
                 )
 
     def _session_lock(self, session_id: str) -> Lock:
         with self._locks_guard:
             return self._session_locks.setdefault(session_id, Lock())
 
-    def _run_agent(self, session_id: str, message: str) -> TurnTrace:
+    def _run_agent(
+        self,
+        session_id: str,
+        message: str,
+        *,
+        identity_wallet: str | None,
+        approval_tx_signature: str | None,
+    ) -> TurnTrace:
         trace = TurnTrace()
         user_id = f"storefront:{session_id}"
         content = types.Content(
@@ -161,6 +195,16 @@ class ConversationService:
                 user_id=user_id,
                 session_id=session_id,
                 new_message=content,
+                state_delta={
+                    # These values come only from the Clerk-verifying FastAPI
+                    # boundary. Empty strings explicitly clear authenticated
+                    # state when an anonymous caller reuses a session ID.
+                    CHAT_REQUEST_STATE: True,
+                    CHAT_IDENTITY_WALLET_STATE: identity_wallet or "",
+                    CHAT_APPROVAL_SIGNATURE_STATE: (
+                        approval_tx_signature or ""
+                    ),
+                },
             ):
                 trace.add_event(event)
         except Exception as exc:  # noqa: BLE001
@@ -176,9 +220,16 @@ class ConversationService:
         fallback_reason: str | None = None,
     ) -> dict[str, Any]:
         search = trace.last_result("search_catalog") or {}
-        quote = trace.last_result("request_quote")
-        payment = trace.last_result("authorize_payment")
-        confirmation = trace.last_result("confirm_settlement")
+        payment_gate = self._payment_gate(trace)
+        quote = (
+            None if payment_gate else trace.last_result("request_quote")
+        )
+        payment = (
+            None if payment_gate else trace.last_result("authorize_payment")
+        )
+        confirmation = (
+            None if payment_gate else trace.last_result("confirm_settlement")
+        )
         order = trace.last_result("get_order_status")
         display_products = (
             search.get("products")
@@ -204,9 +255,30 @@ class ConversationService:
             response["confirmation"] = confirmation
         if order:
             response["order"] = order
+        if payment_gate:
+            response.update(
+                {
+                    "paymentBlocked": True,
+                    "authRequired": bool(payment_gate.get("authRequired")),
+                    "paymentGate": payment_gate,
+                }
+            )
         if fallback_reason:
             response["fallbackReason"] = fallback_reason[:240]
         return response
+
+    @staticmethod
+    def _payment_gate(trace: TurnTrace) -> dict[str, Any] | None:
+        for entry in reversed(trace.tool_results):
+            if entry["name"] not in _PAYMENT_TOOL_NAMES:
+                continue
+            result = entry.get("result")
+            if (
+                isinstance(result, dict)
+                and result.get("paymentBlocked") is True
+            ):
+                return result
+        return None
 
     def _recover_partial_turn(
         self,
@@ -214,12 +286,26 @@ class ConversationService:
         session_id: str,
         trace: TurnTrace,
         reason: str,
+        identity_wallet: str | None,
     ) -> dict[str, Any]:
         """Finish settlement after a sent payment, but never send twice."""
         quote = trace.last_result("request_quote")
         payment = trace.last_result("authorize_payment")
         confirmation = trace.last_result("confirm_settlement")
         if quote and payment and not confirmation and payment.get("txSignature"):
+            if not identity_wallet:
+                refusal = payment_gate_response(None, None)
+                if refusal:
+                    trace.tool_results.append(
+                        {"name": "confirm_settlement", "result": refusal}
+                    )
+                trace.reply = self._fallback_reply_for_trace(trace)
+                return self._response_from_trace(
+                    session_id=session_id,
+                    trace=trace,
+                    mode="fallback",
+                    fallback_reason=reason,
+                )
             mandates = {
                 **quote.get("ap2Mandates", {}),
                 **payment.get("ap2Mandates", {}),
@@ -253,6 +339,15 @@ class ConversationService:
         )
 
     def _fallback_reply_for_trace(self, trace: TurnTrace) -> str:
+        payment_gate = self._payment_gate(trace)
+        if payment_gate:
+            return str(
+                payment_gate.get(
+                    "reason",
+                    "Sign in with Clerk before purchasing. Catalog search "
+                    "and comparison remain available.",
+                )
+            )
         confirmation = trace.last_result("confirm_settlement") or {}
         quote = trace.last_result("request_quote") or {}
         payment = trace.last_result("authorize_payment") or {}
@@ -317,6 +412,8 @@ class ConversationService:
         message: str,
         *,
         reason: str,
+        identity_wallet: str | None,
+        approval_tx_signature: str | None,
     ) -> dict[str, Any]:
         state = self._fallback_states.setdefault(session_id, _FallbackState())
         normalized = message.lower()
@@ -359,11 +456,27 @@ class ConversationService:
                 }
             state.pending_product = None
             ship_to = format_shipping_address(state.shipping_address)
+            payment_gate = payment_gate_response(
+                identity_wallet, approval_tx_signature
+            )
+            if payment_gate:
+                return {
+                    "sessionId": session_id,
+                    "reply": payment_gate["reason"],
+                    "mode": "fallback",
+                    "fallbackReason": reason[:240],
+                    "toolCalls": [],
+                    "products": state.products,
+                    "paymentBlocked": True,
+                    "authRequired": payment_gate["authRequired"],
+                    "paymentGate": payment_gate,
+                }
             try:
                 result = flow.buy(
                     query=str(product["title"]),
                     budget=state.budget,
                     ship_to=ship_to,
+                    identity_wallet=identity_wallet,
                     shipping_address=state.shipping_address,
                 )
             except PermissionError as exc:

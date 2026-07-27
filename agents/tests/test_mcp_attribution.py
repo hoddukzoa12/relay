@@ -412,3 +412,38 @@ def test_a2a_human_delegator_must_match_signed_wallet() -> None:
         assert "delegator does not match" in str(exc)
     else:
         raise AssertionError("A2A must reject a mismatched human delegator")
+
+
+def test_a2a_human_intent_requires_valid_wallet_signature(
+    monkeypatch,
+) -> None:
+    intent = {
+        "user_cart_confirmation_required": False,
+        "natural_language_description": "earbuds",
+        "requires_refundability": False,
+        "price_ceiling": {"amount": "5.00", "currency": "USDC"},
+        "ship_to": "Seoul",
+        "intent_expiry": "2099-01-01T00:00:00Z",
+        "signer_wallet": USER_WALLET,
+        "delegator": USER_WALLET,
+        "signature": "forged",
+    }
+    monkeypatch.setattr(
+        shopping_server, "verify_wallet_signature", lambda *_: False
+    )
+
+    def unexpected_quote(*_args, **_kwargs):
+        raise AssertionError("invalid human A2A identity must fail before quote")
+
+    monkeypatch.setattr(
+        shopping_server.broker, "handle_quote", unexpected_quote
+    )
+    try:
+        shopping_server._handle_intent(
+            {"kind": "message", "messageId": "message"},
+            {"ap2.mandates.IntentMandate": intent},
+        )
+    except ValueError as exc:
+        assert "invalid human wallet signature" in str(exc)
+    else:
+        raise AssertionError("A2A must reject an unsigned human principal")

@@ -193,6 +193,9 @@ def chat(
     if not message:
         raise HTTPException(status_code=422, detail="message must not be blank")
     identity = _optional_identity(authorization)
+    # ``None`` means an anonymous human storefront request, never an agent
+    # principal. Conversation payment tools fail closed on that distinction
+    # while search and comparison stay public.
     return conversation.respond(
         body.sessionId,
         message,
