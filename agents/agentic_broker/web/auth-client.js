@@ -70,6 +70,14 @@
     return btoa(binary).replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/, "");
   }
 
+  function decodeBase64(value) {
+    const binary = atob(value);
+    return Uint8Array.from(binary, (character) => character.charCodeAt(0));
+  }
+
+  const wait = (milliseconds) =>
+    new Promise((resolve) => window.setTimeout(resolve, milliseconds));
+
   class SolanaWalletAdapter {
     constructor(expectedAddress) {
       this.expectedAddress = expectedAddress;
@@ -78,7 +86,7 @@
         window.solflare,
         window.backpack,
         window.solana,
-      ].find((candidate) => candidate?.connect && candidate?.signMessage);
+      ].find((candidate) => candidate?.connect);
       if (!this.provider) {
         throw new Error(
           "Open the same Solana wallet used for Clerk sign-in (Phantom, Solflare, or Backpack).",
@@ -110,6 +118,24 @@
         throw new Error("The Solana wallet returned an invalid signature.");
       }
       return bytes;
+    }
+
+    async signAndSendTransaction(transaction) {
+      await this.connect();
+      if (!this.provider.signAndSendTransaction) {
+        throw new Error(
+          "This wallet cannot submit the SPL approval transaction. Open Phantom and try again.",
+        );
+      }
+      const result = await this.provider.signAndSendTransaction(transaction, {
+        preflightCommitment: "confirmed",
+        maxRetries: 5,
+      });
+      const signature = result?.signature || result;
+      if (!signature || typeof signature !== "string") {
+        throw new Error("The Solana wallet returned no transaction signature.");
+      }
+      return signature;
     }
   }
 
@@ -211,6 +237,106 @@
         ...options,
         headers,
       });
+    }
+
+    approvalStorageKey(walletAddress) {
+      return `relay:spl-approval:${this.baseUrl}:${walletAddress}`;
+    }
+
+    approvalSignature(walletAddress) {
+      try {
+        return localStorage.getItem(this.approvalStorageKey(walletAddress)) || "";
+      } catch {
+        return "";
+      }
+    }
+
+    saveApprovalSignature(walletAddress, signature) {
+      try {
+        if (signature) {
+          localStorage.setItem(this.approvalStorageKey(walletAddress), signature);
+        } else {
+          localStorage.removeItem(this.approvalStorageKey(walletAddress));
+        }
+      } catch {}
+    }
+
+    async signedJson(path, options = {}) {
+      const response = await this.signedRequest(path, options);
+      const payload = await response.json();
+      if (!response.ok) {
+        const detail = payload?.detail || payload?.error || `HTTP ${response.status}`;
+        throw new Error(typeof detail === "string" ? detail : JSON.stringify(detail));
+      }
+      return payload;
+    }
+
+    async delegation() {
+      const identity = this.identity || await this.refreshIdentity();
+      if (!identity?.walletAddress) {
+        throw new Error("Sign in with your Solana wallet first.");
+      }
+      const status = await this.signedJson("/delegation");
+      const approvalTxSignature = status.active
+        ? this.approvalSignature(identity.walletAddress)
+        : "";
+      if (!status.active) this.saveApprovalSignature(identity.walletAddress, "");
+      return { ...status, approvalTxSignature };
+    }
+
+    async submitDelegation(action, amount) {
+      const identity = this.identity || await this.refreshIdentity();
+      if (!identity?.walletAddress) {
+        throw new Error("Sign in with your Solana wallet first.");
+      }
+      const body = { action };
+      if (action === "approve") body.amount = Number(amount).toFixed(6).replace(/0+$/, "").replace(/\.$/, "");
+      const prepared = await this.signedJson("/delegation/transaction", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(body),
+      });
+      await loadScript(
+        "https://cdn.jsdelivr.net/npm/@solana/web3.js@1.98.4/lib/index.iife.min.js",
+      );
+      if (!window.solanaWeb3?.Transaction) {
+        throw new Error("Unable to load the Solana transaction client.");
+      }
+      const transaction = window.solanaWeb3.Transaction.from(
+        decodeBase64(prepared.transaction),
+      );
+      const adapter = new SolanaWalletAdapter(identity.walletAddress);
+      const signature = await adapter.signAndSendTransaction(transaction);
+      if (action === "approve") {
+        this.saveApprovalSignature(identity.walletAddress, signature);
+      }
+
+      for (let attempt = 0; attempt < 24; attempt += 1) {
+        await wait(1_000);
+        const status = await this.delegation();
+        if (action === "approve" && status.active) {
+          return { ...status, approvalTxSignature: signature };
+        }
+        if (action === "revoke" && !status.active) {
+          this.saveApprovalSignature(identity.walletAddress, "");
+          return { ...status, approvalTxSignature: signature };
+        }
+      }
+      throw new Error(
+        `${action === "approve" ? "Approval" : "Revoke"} transaction ${signature} is still confirming.`,
+      );
+    }
+
+    async approveDelegation(amount = 50) {
+      const limit = Number(amount);
+      if (!Number.isFinite(limit) || limit <= 0) {
+        throw new Error("Enter a positive USDC delegation limit.");
+      }
+      return this.submitDelegation("approve", limit);
+    }
+
+    async revokeDelegation() {
+      return this.submitDelegation("revoke");
     }
 
     async signIntent({ query, budget, shipTo }) {

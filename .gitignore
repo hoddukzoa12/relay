@@ -19,7 +19,7 @@ venv/
 .env.*
 !.env.example
 *.wallet.json
-wallets/*.json
+wallets/**/*.json
 !wallets/.gitkeep
 
 # --- Build / infra ---

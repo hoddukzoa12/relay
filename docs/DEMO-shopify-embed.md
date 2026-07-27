@@ -1,10 +1,17 @@
 # Shopify product-page agent widget
 
-The Relay widget delegates to the buyer agent's `POST /buy` rail. It does **not**
-add to cart or open Shopify checkout. An optionally signed-in human wallet
-approves exactly one price-and-expiry-bounded AP2 `IntentMandate`; the separate
-buyer-agent wallet performs the later Solana Pay signature autonomously, while
-Shopify is used only as the final order ledger.
+The Relay storefront uses authenticated `POST /web/buy`. It does **not** add to
+cart or open Shopify checkout. Web checkout requires Clerk wallet sign-in and
+one Phantom SPL Token `Approve`; later Solana Pay transfers are signed by the
+buyer agent as delegate and debit the signed-in user's USDC ATA. Shopify remains
+only the final order ledger.
+
+The human-present web path and human-absent agent path intentionally differ:
+
+- **Web:** Clerk login → one Approve with an on-chain limit → zero-click
+  purchases from the user's wallet → optional Revoke.
+- **MCP/A2A/CLI:** no Clerk or browser; the configured buyer-agent wallet pays
+  autonomously exactly as before.
 
 ## 1. Allow the storefront origin
 
@@ -175,14 +182,19 @@ reintroduce human checkout approval and break the autonomous payment path.
 1. `make check-wallets` shows buyer SOL for fees and enough Circle devnet USDC.
 2. `./scripts/dev.sh` is running and the HTTPS tunnel health check passes.
 3. The storefront origin is present in `BUYER_CORS_ORIGINS`.
-4. The widget shows `[ WALLET READY ]`; this is the agent payer, not the human.
+4. The chat shows `[ SIGN IN TO BUY ]`; anonymous catalog search still works.
 5. Select **Wallet sign-in** and show the backend-verified human wallet address.
-6. Click **Delegate autonomous purchase**, then approve the one
-   `IntentMandate` signature (price ceiling + 15-minute expiry).
-7. Show the inline states: `[ A2A RECEIVED ]` → `[ SIGNED ]` →
+6. Enter the maximum USDC amount (default `50`) and select **Approve once**.
+   Phantom signs one SPL Token Approve transaction; the agent pays its SOL fee.
+7. Choose one or more products without another wallet prompt. The header shows
+   the remaining live on-chain allowance, and **Revoke** removes it at any time.
+8. Show the inline states: `[ A2A RECEIVED ]` → `[ SIGNED ]` →
    `[ ON-CHAIN ]` → `[ PAID ]`.
-8. Open **View explorer ↗**, then **My orders**, to show the devnet proof and
-   the Shopify order filtered by the signed-in wallet.
+9. Open the explorer proof and show that the user's pre/post USDC token balance
+   decreased while the Shopify order's `buyer_wallet` is that Clerk wallet.
+10. Try an over-limit purchase and a purchase after Revoke; both must stop with
+   an approval/reapproval message before any transfer is signed.
+11. Open **My orders** to show the Shopify order filtered by the signed-in wallet.
 
 The Shopify storefront widget is the browser demo surface. If the theme or
 tunnel is unavailable, restore it rather than pointing users at the buyer

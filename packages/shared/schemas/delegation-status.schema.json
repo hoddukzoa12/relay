@@ -1,0 +1,39 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://agentic-resell-broker/schemas/delegation-status.json",
+  "title": "DelegationStatus",
+  "description": "Current on-chain SPL Token delegation state.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "active",
+    "delegator",
+    "delegateAuthority",
+    "allowanceRemaining",
+    "balance",
+    "sourceTokenAccount",
+    "usdcMint",
+    "network"
+  ],
+  "properties": {
+    "active": { "type": "boolean" },
+    "delegator": { "type": "string" },
+    "delegateAuthority": { "type": "string" },
+    "allowanceRemaining": { "$ref": "#/$defs/money" },
+    "balance": { "$ref": "#/$defs/money" },
+    "sourceTokenAccount": { "type": "string" },
+    "usdcMint": { "type": "string" },
+    "network": { "enum": ["solana-devnet", "solana-mainnet"] }
+  },
+  "$defs": {
+    "money": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["amount", "currency"],
+      "properties": {
+        "amount": { "type": "string", "pattern": "^\\d+(\\.\\d{1,6})?$" },
+        "currency": { "const": "USDC" }
+      }
+    }
+  }
+}

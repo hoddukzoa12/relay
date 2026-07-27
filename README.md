@@ -173,22 +173,27 @@ used by `/buy`; payment signing and on-chain verification are not duplicated.
 See [`docs/MCP.md`](docs/MCP.md) for tool inputs, authentication, remote client
 configuration, and deployment verification.
 
-### Optional human wallet identity and delegation
+### Human-present web wallet delegation
 
-The Shopify widget can add a human identity without making sign-in
-mandatory for agents:
+Shopify web payment requires a human identity, without making sign-in mandatory
+for autonomous agents:
 
 1. Select **Wallet sign-in**. Clerk performs Sign in with Solana and also acts
    as Shopify's configured OIDC identity provider.
 2. The buyer backend validates the Clerk session JWT (RS256 signature, expiry,
    and issuer) against the cached JWKS, then reads the verified Solana wallet
    from the Clerk user record.
-3. On **Delegate**, that same browser wallet signs exactly one AP2
-   `IntentMandate` containing the price ceiling and 15-minute expiry.
-4. The broker's separate agent wallet signs the `PaymentMandate` and sends
-   USDC autonomously. There is no per-payment human approval and the human
-   wallet never pays.
-5. **My orders** queries Shopify orders whose `buyer_wallet` custom attribute
+3. On **Approve once**, that same browser wallet signs one SPL Token `Approve`.
+   Its USDC ATA sets the broker buyer wallet as delegate with the chosen limit.
+4. Before every purchase, `payments` reads that ATA and checks its owner,
+   delegate, `delegatedAmount`, and USDC balance. This live account—not a local
+   allowance table or client value—is authoritative.
+5. The broker wallet signs the `PaymentMandate` and transfer as delegate, and
+   remains fee payer. USDC leaves the human wallet, the human needs no SOL, and
+   later purchases require no wallet click.
+6. **Revoke** removes the on-chain delegate and immediately blocks later web
+   purchases until a new approval.
+7. **My orders** queries Shopify orders whose `buyer_wallet` custom attribute
    matches the signed-in identity wallet.
 
 The existing `POST /buy`, CLI, A2A, and MCP-style autonomous paths require no
@@ -209,8 +214,10 @@ checkout.
 This maps to PRD §5, steps 5–8 (the judging core):
 
 1. **Buyer → Shopping** A2A JSON-RPC `POST /a2a` `message/send` — sends an
-   `IntentMandate` as an A2A DataPart. It is signed by the authenticated human
-   wallet when present, otherwise by the configured buyer agent wallet. The
+   `IntentMandate` as an A2A DataPart. On the web path it records the
+   Clerk-verified `delegator`, agent `delegateAuthority`, on-chain allowance
+   snapshot, and approval transaction signature; the buyer agent signs this
+   attestation. The agent-only path omits those fields. The
    original `POST /a2a/quote` route remains available for REST compatibility.
 2. **Shopping** queries live Shopify variants, removes out-of-stock and
    marked-up-over-budget candidates, then uses Gemini (or deterministic
@@ -220,8 +227,10 @@ This maps to PRD §5, steps 5–8 (the judging core):
    [PaymentRequest](packages/shared/schemas/payment-request.schema.json) plus
    the selected real SKU and variant ID.
 3. **Buyer** verifies the CartMandate, signs a bound `PaymentMandate`, then calls
-   **payments** `POST /pay` — the wallet **signs and broadcasts** a USDC SPL
-   transfer tagged with the `reference` key. **No human approval.**
+   **payments** `POST /pay`. When a verified `delegator` is present, payments
+   re-reads the user's ATA and transfers with the buyer wallet as SPL delegate;
+   otherwise it uses the unchanged agent-wallet source. Both transactions are
+   tagged with the `reference` key and require **no per-purchase human approval**.
 4. **Buyer → Shopping** A2A `message/send` carries the `PaymentMandate` and
    `txSignature`; the legacy `POST /a2a/settle` route is still available.
 5. **Shopping** calls **payments** `POST /verify` → `@solana/pay` `findReference`

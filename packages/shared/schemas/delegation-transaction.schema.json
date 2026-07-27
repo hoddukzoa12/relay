@@ -1,0 +1,41 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://agentic-resell-broker/schemas/delegation-transaction.json",
+  "title": "DelegationTransaction",
+  "description": "Agent-fee-paid SPL approval or revoke transaction awaiting the delegator signature.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "action",
+    "delegator",
+    "delegateAuthority",
+    "allowanceRemaining",
+    "transaction",
+    "blockhash",
+    "lastValidBlockHeight"
+  ],
+  "properties": {
+    "action": { "enum": ["approve", "revoke"] },
+    "delegator": { "type": "string" },
+    "delegateAuthority": { "type": "string" },
+    "allowanceRemaining": { "$ref": "#/$defs/money" },
+    "transaction": {
+      "type": "string",
+      "minLength": 1,
+      "description": "Base64 legacy Solana transaction partially signed by the fee payer."
+    },
+    "blockhash": { "type": "string", "minLength": 1 },
+    "lastValidBlockHeight": { "type": "integer", "minimum": 1 }
+  },
+  "$defs": {
+    "money": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["amount", "currency"],
+      "properties": {
+        "amount": { "type": "string", "pattern": "^\\d+(\\.\\d{1,6})?$" },
+        "currency": { "const": "USDC" }
+      }
+    }
+  }
+}

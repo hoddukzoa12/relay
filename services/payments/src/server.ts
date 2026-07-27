@@ -12,6 +12,12 @@ import {
   verify,
 } from "./payments.js";
 import { signMandate, verifyMandate } from "./mandates.js";
+import {
+  DelegationRefusedError,
+  delegationStatus,
+  prepareDelegationTransaction,
+  verifyDelegationApproval,
+} from "./delegation.js";
 
 const app = express();
 app.use(cors());
@@ -109,12 +115,57 @@ const PaySchema = z.object({
   payTo: z.string(),
   amount: z.string().regex(/^\d+(\.\d{1,6})?$/),
   reference: z.string(),
+  delegator: z.string().optional(),
 });
 app.post(
   "/pay",
   asyncH(async (req, res) => {
     const input = PaySchema.parse(req.body);
     res.json(await pay(input));
+  }),
+);
+
+const DelegationStatusSchema = z.object({ delegator: z.string() });
+app.post(
+  "/delegations/status",
+  asyncH(async (req, res) => {
+    const { delegator } = DelegationStatusSchema.parse(req.body);
+    res.json(await delegationStatus(delegator));
+  }),
+);
+
+const VerifyDelegationSchema = z.object({
+  delegator: z.string(),
+  approvalTxSignature: z.string().min(1),
+});
+app.post(
+  "/delegations/verify",
+  asyncH(async (req, res) => {
+    const { delegator, approvalTxSignature } = VerifyDelegationSchema.parse(
+      req.body,
+    );
+    res.json(
+      await verifyDelegationApproval(delegator, approvalTxSignature),
+    );
+  }),
+);
+
+const DelegationTransactionSchema = z.discriminatedUnion("action", [
+  z.object({
+    action: z.literal("approve"),
+    delegator: z.string(),
+    amount: z.string().regex(/^\d+(\.\d{1,6})?$/),
+  }),
+  z.object({
+    action: z.literal("revoke"),
+    delegator: z.string(),
+  }),
+]);
+app.post(
+  "/delegations/transactions",
+  asyncH(async (req, res) => {
+    const input = DelegationTransactionSchema.parse(req.body);
+    res.json(await prepareDelegationTransaction(input));
   }),
 );
 
@@ -145,7 +196,7 @@ app.use((err: unknown, _req: Request, res: Response, _next: NextFunction) => {
   const status =
     err instanceof z.ZodError
       ? 400
-      : err instanceof RefundRefusedError
+      : err instanceof RefundRefusedError || err instanceof DelegationRefusedError
         ? 409
         : 500;
   console.error("[payments] error:", message);

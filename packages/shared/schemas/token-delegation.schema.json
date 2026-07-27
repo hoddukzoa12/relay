@@ -1,0 +1,31 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://agentic-resell-broker/schemas/token-delegation.json",
+  "title": "TokenDelegation",
+  "description": "SPL Token delegation proof embedded in a browser-present AP2 intent.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "delegator",
+    "delegateAuthority",
+    "allowanceRemaining",
+    "approvalTxSignature"
+  ],
+  "properties": {
+    "delegator": { "type": "string" },
+    "delegateAuthority": { "type": "string" },
+    "allowanceRemaining": { "$ref": "#/$defs/money" },
+    "approvalTxSignature": { "type": "string", "minLength": 1 }
+  },
+  "$defs": {
+    "money": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["amount", "currency"],
+      "properties": {
+        "amount": { "type": "string", "pattern": "^\\d+(\\.\\d{1,6})?$" },
+        "currency": { "const": "USDC" }
+      }
+    }
+  }
+}

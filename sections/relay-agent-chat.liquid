@@ -139,6 +139,7 @@
         display: flex;
         align-items: center;
         justify-content: space-between;
+        flex-wrap: wrap;
         gap: 18px;
         min-height: 66px;
         padding: 16px clamp(20px, 3.2vw, 44px);
@@ -148,6 +149,43 @@
       .chat-title { font-weight: 570; letter-spacing: -.02em; }
       .wallet-state { color: var(--relay-accent); text-align: right; }
       .wallet-state.error { color: var(--relay-muted); }
+      .identity {
+        display: flex;
+        align-items: center;
+        justify-content: flex-end;
+        flex-wrap: wrap;
+        gap: 7px;
+      }
+      .identity button, .identity input {
+        min-height: 32px;
+        border: 1px solid var(--relay-rule);
+        border-radius: 0;
+        background: transparent;
+        color: var(--relay-ink);
+        font-size: 11px;
+      }
+      .identity button {
+        padding: 6px 10px;
+        cursor: pointer;
+      }
+      .identity button:hover:not(:disabled) {
+        border-color: var(--relay-accent);
+        color: var(--relay-accent);
+      }
+      .identity button:disabled { cursor: not-allowed; opacity: .45; }
+      .identity input {
+        width: 68px;
+        padding: 6px 8px;
+      }
+      .identity-limit {
+        display: flex;
+        align-items: center;
+        gap: 5px;
+        color: var(--relay-muted);
+        font: 600 9px/1.2 ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+        letter-spacing: .05em;
+        text-transform: uppercase;
+      }
 
       .messages {
         overflow: auto;
@@ -450,7 +488,7 @@
         </div>
         <div class="rail-foot" aria-label="How Relay purchases work">
           <div class="rail-rule"><strong>01</strong><span>Real Shopify catalog</span></div>
-          <div class="rail-rule"><strong>02</strong><span>0 payment approval clicks</span></div>
+          <div class="rail-rule"><strong>02</strong><span>1 approval, then 0 clicks</span></div>
           <div class="rail-rule"><strong>03</strong><span>On-chain USDC proof</span></div>
         </div>
       </aside>
@@ -458,7 +496,17 @@
       <section class="chat" aria-label="Relay shopping chat">
         <header class="chat-head">
           <span class="chat-title">Shopping conversation</span>
-          <span class="wallet-state" id="wallet-state">[ CHECKING AGENT ]</span>
+          <div class="identity">
+            <span class="wallet-state" id="wallet-state">[ CHECKING AGENT ]</span>
+            <label class="identity-limit">
+              Limit
+              <input id="delegation-limit" inputmode="decimal" value="50" aria-label="USDC delegation limit">
+              USDC
+            </label>
+            <button id="approve" type="button" disabled>Approve once</button>
+            <button id="revoke" type="button" disabled>Revoke</button>
+            <button id="auth" type="button">Wallet sign-in</button>
+          </div>
         </header>
         <div class="messages" id="messages" role="log" aria-live="polite" aria-relevant="additions"></div>
         <footer class="composer">
@@ -473,7 +521,7 @@
             >
             <button class="send" id="send" type="submit">Send ↗</button>
           </form>
-          <p class="composer-note">Catalog search is non-binding. Payment starts only after you choose or delegate a candidate.</p>
+          <p class="composer-note">Search is public. Payment requires Clerk wallet sign-in and one on-chain SPL approval; later purchases need 0 wallet clicks.</p>
         </footer>
       </section>
     </main>
@@ -494,6 +542,9 @@
       this.history = [];
       this.cluster = "devnet";
       this.walletAddress = "";
+      this.authClient = null;
+      this.identity = null;
+      this.delegation = null;
       this.sessionKey = `relay-agent-chat:${window.location.pathname}`;
       this.agentSessionKey = `relay-agent-session:${window.location.pathname}`;
       this.agentSessionId = this.loadAgentSessionId();
@@ -506,6 +557,9 @@
         (this.getAttribute("intro") || "").trim() ||
         "Search the live catalog, set a budget, and let the agent settle in USDC on Solana devnet.";
       this.$("#composer").addEventListener("submit", (event) => this.submit(event));
+      this.$("#auth").addEventListener("click", () => this.toggleAuth());
+      this.$("#approve").addEventListener("click", () => this.approve());
+      this.$("#revoke").addEventListener("click", () => this.revoke());
 
       if (!this.restoreHistory()) {
         this.appendMessage(
@@ -514,6 +568,7 @@
         );
       }
       this.loadWallet();
+      this.loadAuth();
     }
 
     cleanBaseUrl(value) {
@@ -636,6 +691,168 @@
       return payload;
     }
 
+    async loadAuthScript() {
+      if (window.RelayAuth) return;
+      await new Promise((resolve, reject) => {
+        const src = `${this.baseUrl}/auth-client.js`;
+        const existing = [...document.scripts].find((script) => script.src === src);
+        if (existing) {
+          if (window.RelayAuth) resolve();
+          else {
+            existing.addEventListener("load", resolve, { once: true });
+            existing.addEventListener("error", reject, { once: true });
+          }
+          return;
+        }
+        const script = document.createElement("script");
+        script.src = src;
+        script.crossOrigin = "anonymous";
+        script.onload = resolve;
+        script.onerror = () => reject(new Error("Unable to load Relay wallet identity."));
+        document.head.append(script);
+      });
+    }
+
+    async loadAuth() {
+      if (!this.isConfigured()) return;
+      try {
+        await this.loadAuthScript();
+        this.authClient = window.RelayAuth.client(this.baseUrl);
+        this.authClient.subscribe((identity) => this.updateIdentity(identity));
+        const status = await this.authClient.ready;
+        if (!status.configured) {
+          this.$("#auth").disabled = true;
+          this.$("#auth").textContent = "Clerk unavailable";
+        }
+      } catch (error) {
+        this.$("#wallet-state").textContent = `[ AUTH ERROR ]`;
+        this.$("#wallet-state").title = this.errorMessage(error);
+        this.$("#wallet-state").classList.add("error");
+      }
+    }
+
+    async updateIdentity(identity) {
+      this.identity = identity;
+      const authButton = this.$("#auth");
+      if (!identity?.walletAddress) {
+        this.delegation = null;
+        authButton.textContent = "Wallet sign-in";
+        this.$("#approve").disabled = true;
+        this.$("#revoke").disabled = true;
+        this.$("#wallet-state").textContent = "[ SIGN IN TO BUY ]";
+        this.$("#wallet-state").title = "Catalog search remains available without sign-in.";
+        return;
+      }
+      authButton.textContent = "Sign out";
+      this.$("#approve").disabled = false;
+      await this.refreshDelegation();
+    }
+
+    async toggleAuth() {
+      try {
+        if (!this.authClient) await this.loadAuth();
+        if (this.identity) await this.authClient.signOut();
+        else await this.authClient.signIn();
+      } catch (error) {
+        this.appendMessage("agent", this.errorMessage(error));
+      }
+    }
+
+    renderDelegation(status) {
+      this.delegation = status;
+      const state = this.$("#wallet-state");
+      if (!this.identity?.walletAddress) {
+        state.textContent = "[ SIGN IN TO BUY ]";
+        return;
+      }
+      const wallet = this.short(this.identity.walletAddress);
+      if (status?.active) {
+        const amount = status.allowanceRemaining?.amount || "0";
+        state.textContent = `[ ${wallet} · ${amount} USDC LEFT ]`;
+        state.title =
+          `Delegator ${this.identity.walletAddress}; delegate ${status.delegateAuthority}`;
+        state.classList.remove("error");
+        this.$("#revoke").disabled = false;
+      } else {
+        state.textContent = `[ ${wallet} · APPROVAL REQUIRED ]`;
+        state.title = "Approve the broker once from this Clerk-verified wallet.";
+        state.classList.add("error");
+        this.$("#revoke").disabled = true;
+      }
+    }
+
+    async refreshDelegation() {
+      if (!this.identity || !this.authClient) return null;
+      try {
+        const status = await this.authClient.delegation();
+        this.renderDelegation(status);
+        return status;
+      } catch (error) {
+        this.$("#wallet-state").textContent = "[ DELEGATION UNAVAILABLE ]";
+        this.$("#wallet-state").title = this.errorMessage(error);
+        this.$("#wallet-state").classList.add("error");
+        return null;
+      }
+    }
+
+    async approve() {
+      if (this.busy) return;
+      const limit = Number(this.$("#delegation-limit").value);
+      this.setBusy(true);
+      this.$("#approve").textContent = "Check Phantom…";
+      try {
+        const status = await this.authClient.approveDelegation(limit);
+        this.renderDelegation(status);
+        this.appendMessage(
+          "agent",
+          `On-chain limit approved: ${status.allowanceRemaining.amount} USDC. The broker can now buy from this wallet with 0 additional approval clicks until the limit is spent or revoked.`,
+        );
+      } catch (error) {
+        this.appendMessage("agent", this.errorMessage(error));
+      } finally {
+        this.$("#approve").textContent = "Approve once";
+        this.setBusy(false);
+      }
+    }
+
+    async revoke() {
+      if (this.busy) return;
+      this.setBusy(true);
+      this.$("#revoke").textContent = "Check Phantom…";
+      try {
+        const status = await this.authClient.revokeDelegation();
+        this.renderDelegation(status);
+        this.appendMessage(
+          "agent",
+          "SPL delegation revoked on-chain. Future web purchases are blocked until you approve again.",
+        );
+      } catch (error) {
+        this.appendMessage("agent", this.errorMessage(error));
+      } finally {
+        this.$("#revoke").textContent = "Revoke";
+        this.setBusy(false);
+      }
+    }
+
+    approvalTxSignature() {
+      return this.delegation?.approvalTxSignature || "";
+    }
+
+    async requirePurchaseDelegation() {
+      if (!this.identity) {
+        throw new Error(
+          "Wallet sign-in is required to buy. Catalog search and comparison remain available.",
+        );
+      }
+      const status = await this.refreshDelegation();
+      if (!status?.active || !status.approvalTxSignature) {
+        throw new Error(
+          "Approve the broker once in Phantom before buying. The on-chain limit is the spending authority.",
+        );
+      }
+      return status;
+    }
+
     async loadWallet() {
       const state = this.$("#wallet-state");
       if (!this.isConfigured()) {
@@ -665,6 +882,7 @@
           state.classList.add("error");
         }
       }
+      if (this.identity) await this.refreshDelegation();
     }
 
     parseBudget(text) {
@@ -773,14 +991,24 @@
       this.setBusy(true);
       let result;
       try {
-        result = await this.fetchJson("/chat", {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({
-            sessionId: this.agentSessionId,
-            message: text,
-          }),
-        });
+        const body = {
+          sessionId: this.agentSessionId,
+          message: text,
+          ...(this.approvalTxSignature()
+            ? { approvalTxSignature: this.approvalTxSignature() }
+            : {}),
+        };
+        result = this.identity
+          ? await this.authClient.signedJson("/chat", {
+              method: "POST",
+              headers: { "Content-Type": "application/json" },
+              body: JSON.stringify(body),
+            })
+          : await this.fetchJson("/chat", {
+              method: "POST",
+              headers: { "Content-Type": "application/json" },
+              body: JSON.stringify(body),
+            });
       } catch (error) {
         // A preview theme can briefly point at the previous buyer revision while
         // a new API revision awaits coordinator-approved deployment. Preserve
@@ -863,11 +1091,7 @@
     async chooseProduct(product) {
       if (this.busy || !product) return;
       const budget = this.lastIntent?.budget || this.defaultBudget(product);
-      const instruction =
-        `Buy "${product.title}" within my maximum budget of ${budget.toFixed(2)} USDC ` +
-        `and ship to ${this.shipTo}.`;
-      this.appendMessage("user", instruction);
-      await this.sendChat(instruction);
+      await this.startPurchase(product, { budget });
     }
 
     async legacyTurn(text, chatError) {
@@ -1198,13 +1422,16 @@
 
     async startPurchase(product, options = {}) {
       if (this.busy || !product) return;
+      try {
+        await this.requirePurchaseDelegation();
+      } catch (error) {
+        this.appendMessage("agent", this.errorMessage(error));
+        return;
+      }
       if (options.announceSelection !== false) {
         this.appendMessage("user", `Choose ${product.title} and pay autonomously.`);
       }
       const budget = options.budget || this.lastIntent?.budget || this.defaultBudget(product);
-      const instruction =
-        `Buy "${product.title}" with a maximum budget of ${budget.toFixed(2)} USDC ` +
-        `and ship to ${this.shipTo}.`;
       const progress = this.createProgress(product, budget);
       this.setBusy(true);
 
@@ -1213,12 +1440,18 @@
       }, 1800);
 
       try {
-        const result = await this.fetchJson("/buy", {
+        const result = await this.authClient.signedJson("/web/buy", {
           method: "POST",
           headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ text: instruction }),
+          body: JSON.stringify({
+            query: product.title,
+            budget,
+            shipTo: this.shipTo,
+            approvalTxSignature: this.approvalTxSignature(),
+          }),
         });
         this.renderResult(progress, result, budget);
+        await this.refreshDelegation();
       } catch (error) {
         this.renderFailure(progress, error);
       } finally {

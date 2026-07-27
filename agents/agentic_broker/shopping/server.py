@@ -170,7 +170,7 @@ def _handle_intent(message: dict[str, Any], data: dict[str, Any]) -> dict[str, A
         "amount": payment_request.price.model_dump(),
         "cart_mandate_signature": cart.signature,
         "intent_mandate_signature": intent.signature,
-        "identity_wallet": intent.signer_wallet,
+        "identity_wallet": intent.delegator or intent.signer_wallet,
     }
     return _task(
         message,
@@ -207,6 +207,11 @@ def _handle_payment(message: dict[str, Any], data: dict[str, Any]) -> dict[str, 
         raise ValueError("PaymentMandate is not bound to the accepted CartMandate")
     if contents.intent_mandate_signature != expected["intent_mandate_signature"]:
         raise ValueError("PaymentMandate is not bound to the accepted IntentMandate")
+    if (
+        expected.get("identity_wallet")
+        and contents.payer.wallet_address != expected["identity_wallet"]
+    ):
+        raise ValueError("PaymentMandate payer does not match the delegated wallet")
 
     confirmation = broker.handle_settle(
         settlement,

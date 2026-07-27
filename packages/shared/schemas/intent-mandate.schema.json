@@ -26,6 +26,23 @@
       "type": "string",
       "description": "Signed-in human Solana wallet for delegated intents; omitted for the agent-only compatibility path."
     },
+    "delegator": {
+      "type": "string",
+      "description": "Clerk-verified Solana wallet whose USDC ATA granted the SPL delegate."
+    },
+    "delegateAuthority": {
+      "type": "string",
+      "description": "Broker buyer-agent wallet authorized as the SPL delegate."
+    },
+    "allowanceRemaining": {
+      "allOf": [{ "$ref": "#/$defs/money" }],
+      "description": "Signed on-chain allowance snapshot; payments re-read the account before every spend."
+    },
+    "approvalTxSignature": {
+      "type": "string",
+      "minLength": 1,
+      "description": "Devnet transaction in which the user approved the SPL delegate."
+    },
     "signature": { "type": "string", "minLength": 1 }
   },
   "$defs": {
