@@ -235,7 +235,16 @@ export function catalogProductsFromShopify(
 ): CatalogProduct[] {
   return data.products.nodes.flatMap((product) => {
     if (product.status !== "ACTIVE") return [];
-    const variant = selectCatalogVariant(product.variants.nodes);
+    const costBackedVariants = product.variants.nodes.filter(
+      (variant) => supplierCostFromShopifyVariant(variant) !== null,
+    );
+    // A sourced product is bound to the exact variant whose private supplier
+    // snapshot was persisted. Prefer that eligible set so another variant on
+    // the same product cannot replace the SKU/variant ID used by the order.
+    // Products without supplier snapshots retain the generic catalog behavior.
+    const variant = selectCatalogVariant(
+      costBackedVariants.length ? costBackedVariants : product.variants.nodes,
+    );
     if (!variant) return [];
     return [
       {

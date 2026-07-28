@@ -340,6 +340,31 @@ def test_payment_gate_is_actionable_and_not_rendered_as_a_quote() -> None:
     assert "quote" not in response
 
 
+def test_fallback_reply_preserves_product_specific_sourcing_refusal() -> None:
+    service = conversation.ConversationService()
+    message = (
+        "Supplier sourcing was attempted, but Relay could not safely source this "
+        "product: exact SKU binding failed. Try a different product."
+    )
+    trace = conversation.TurnTrace(
+        tool_results=[
+            {
+                "name": "search_catalog",
+                "result": {
+                    "products": [],
+                    "externalSourcing": {
+                        "status": "unavailable",
+                        "message": message,
+                        "reason": "exact SKU binding failed",
+                    },
+                },
+            }
+        ]
+    )
+
+    assert service._fallback_reply_for_trace(trace) == message
+
+
 def test_missing_gemini_key_uses_deterministic_catalog_fallback() -> None:
     service = conversation.ConversationService()
     catalog = {

@@ -284,6 +284,33 @@ class CatalogSourcingTest(unittest.TestCase):
             ):
                 tools.source_and_price("smart watch", 10.00)
 
+    def test_buyer_preserves_product_binding_refusal_and_suggests_retry(
+        self,
+    ) -> None:
+        reason = (
+            "this product could not be bound to one sellable Shopify variant "
+            "by exact SKU or variant ID"
+        )
+        with (
+            patch.object(
+                buyer_tools.service_clients,
+                "commerce_products",
+                return_value={"products": []},
+            ),
+            patch.object(
+                buyer_tools.service_clients,
+                "shopping_source_catalog",
+                side_effect=RuntimeError(reason),
+            ),
+        ):
+            result = buyer_tools.search_catalog("iphone case", 10.00)
+
+        external = result["externalSourcing"]
+        self.assertEqual(external["reason"], reason)
+        self.assertIn(reason, external["message"])
+        self.assertIn("Try a different product", external["message"])
+        self.assertNotIn("disabled", external["message"].lower())
+
     def test_catalog_query_failure_retries_the_full_real_catalog(self) -> None:
         available = product("REAL", "Wireless Earbuds Mini", "2.50", 10)
         with (

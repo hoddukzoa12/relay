@@ -9,8 +9,10 @@ from __future__ import annotations
 from dataclasses import dataclass
 from datetime import date
 from decimal import Decimal, InvalidOperation, ROUND_HALF_UP
+from itertools import product
 import logging
 import re
+import time
 from typing import Any, Iterable
 from urllib.parse import urlsplit
 
@@ -21,6 +23,8 @@ from ..common.dsers_client import DSersMCPClient, DSersMCPError
 _LOG = logging.getLogger(__name__)
 _AUTONOMOUS_VENDOR = "Relay DSers Autonomous"
 _AUTONOMOUS_TAGS = ["relay:autonomous-sourced", "relay:dsers"]
+_BIND_LOOKUP_ATTEMPTS = 5
+_BIND_LOOKUP_DELAY_SECONDS = 1.0
 
 # Check before the first external search. English and Korean demo requests are
 # covered explicitly; broad roots intentionally bias toward refusal.
@@ -89,6 +93,8 @@ class VariantEconomics:
     cost: Decimal
     sale_price: Decimal
     stock: int
+    shopify_variant_id: str = ""
+    option_values: tuple[str, ...] = ()
 
 
 def assert_query_allowed(query: str) -> None:
@@ -148,6 +154,87 @@ def _decimal(value: Any) -> Decimal | None:
 def _int(value: Any) -> int:
     number = _decimal(value)
     return int(number) if number is not None else 0
+
+
+def _shopify_variant_id(record: dict[str, Any]) -> str:
+    explicit = _field(
+        record,
+        "shopify_variant_id",
+        "shopify_variant_gid",
+        "store_variant_id",
+        "store_variant_gid",
+        "platform_variant_id",
+        "platform_variant_gid",
+    )
+    text = str(explicit or "").strip()
+    if re.fullmatch(r"\d+", text):
+        return f"gid://shopify/ProductVariant/{text}"
+    if re.fullmatch(r"gid://shopify/ProductVariant/\d+", text):
+        return text
+
+    # A generic variant_id can belong to the supplier. Accept it only when the
+    # payload itself proves that it is a Shopify ProductVariant GID.
+    generic = str(_field(record, "variant_id", "variantId") or "").strip()
+    return (
+        generic
+        if re.fullmatch(r"gid://shopify/ProductVariant/\d+", generic)
+        else ""
+    )
+
+
+def _preview_option_signatures(payload: dict[str, Any]) -> dict[str, tuple[str, ...]]:
+    """Map DSers display rows to exact declared option-value combinations."""
+    raw_options = payload.get("options")
+    if not isinstance(raw_options, list) or not raw_options:
+        return {}
+    groups: list[list[str]] = []
+    combinations = 1
+    for option in raw_options:
+        if not isinstance(option, dict) or not isinstance(
+            option.get("values"), list
+        ):
+            return {}
+        values = [
+            str(value).strip()
+            for value in option["values"]
+            if str(value).strip()
+        ]
+        if not values or len(set(values)) != len(values):
+            return {}
+        combinations *= len(values)
+        if combinations > 10_000:
+            return {}
+        groups.append(values)
+
+    signatures: dict[str, tuple[str, ...]] = {}
+    ambiguous: set[str] = set()
+    for selected in product(*groups):
+        name = "-".join(selected)
+        signature = tuple(sorted(selected))
+        if name in signatures and signatures[name] != signature:
+            ambiguous.add(name)
+        else:
+            signatures[name] = signature
+    for name in ambiguous:
+        signatures.pop(name, None)
+    return signatures
+
+
+def _shopify_sku_option_values(sku: str) -> tuple[str, ...]:
+    """Extract option labels only from a structured supplier-backed Shopify SKU."""
+    parts = sku.split(";")
+    if len(parts) < 2:
+        return ()
+    values: list[str] = []
+    for part in parts:
+        match = re.fullmatch(r"[^#;]+#([^;]+)", part)
+        if not match:
+            return ()
+        value = match.group(1).strip()
+        if not value:
+            return ()
+        values.append(value)
+    return tuple(sorted(values)) if len(set(values)) == len(values) else ()
 
 
 def _source_url(record: dict[str, Any]) -> str:
@@ -329,6 +416,7 @@ def dsers_product_preview(
 
 def _variant_economics(payload: dict[str, Any]) -> list[VariantEconomics]:
     variants: list[VariantEconomics] = []
+    option_signatures = _preview_option_signatures(payload)
     for record in _walk_dicts(payload):
         cost = _decimal(
             _field(
@@ -368,6 +456,8 @@ def _variant_economics(payload: dict[str, Any]) -> list[VariantEconomics]:
                         "inventory",
                     )
                 ),
+                shopify_variant_id=_shopify_variant_id(record),
+                option_values=option_signatures.get(sku, ()),
             )
         )
     # DSers's full preview uses a compact matrix rather than objects:
@@ -401,12 +491,25 @@ def _variant_economics(payload: dict[str, Any]) -> list[VariantEconomics]:
                         stock=_int(
                             tabular.get("supplier_qty", tabular.get("qty"))
                         ),
+                        shopify_variant_id=_shopify_variant_id(tabular),
+                        option_values=option_signatures.get(name, ()),
                     )
                 )
     # Some tool payloads repeat the same variant in summary/detail branches.
-    unique: dict[tuple[str, Decimal, Decimal], VariantEconomics] = {}
+    unique: dict[
+        tuple[str, Decimal, Decimal, str, tuple[str, ...]],
+        VariantEconomics,
+    ] = {}
     for variant in variants:
-        unique[(variant.sku, variant.cost, variant.sale_price)] = variant
+        unique[
+            (
+                variant.sku,
+                variant.cost,
+                variant.sale_price,
+                variant.shopify_variant_id,
+                variant.option_values,
+            )
+        ] = variant
     return list(unique.values())
 
 
@@ -448,7 +551,7 @@ def validate_margin(
             "DSers preview has no in-stock positive-margin variant whose "
             f"final broker quote fits {budget} USDC"
         )
-    return variants
+    return affordable
 
 
 def _discover_store(client: DSersMCPClient) -> tuple[str, dict[str, Any]]:
@@ -558,64 +661,227 @@ def _store_handle(record: dict[str, Any]) -> str:
     )
 
 
+def _dsers_product_id(record: dict[str, Any]) -> str:
+    return str(_field(record, "dsers_product_id", "product_id") or "").strip()
+
+
+def _exact_binding_records(payload: dict[str, Any]) -> list[dict[str, Any]]:
+    """Return only records carrying an exact Shopify GID or handle."""
+    return [
+        record
+        for record in _walk_dicts(payload)
+        if _shopify_product_id(record) or _store_handle(record)
+    ]
+
+
+def _resolve_exact_shopify_product(
+    record: dict[str, Any],
+) -> tuple[str, dict[str, Any]] | None:
+    """Resolve variants through exact handle/GID reads, never product titles."""
+    expected_id = _shopify_product_id(record)
+    handle = _store_handle(record)
+    if handle:
+        try:
+            resolved = service_clients.commerce_product_by_handle(handle)
+        except Exception as exc:  # noqa: BLE001
+            _LOG.info(
+                "[dsers-sourcing] exact Shopify handle %s not readable yet: %s",
+                handle,
+                exc,
+            )
+        else:
+            resolved_id = str(resolved.get("productId") or "")
+            if (
+                re.fullmatch(r"gid://shopify/Product/\d+", resolved_id)
+                and (not expected_id or resolved_id == expected_id)
+            ):
+                return resolved_id, resolved
+
+    if expected_id:
+        try:
+            resolved = service_clients.commerce_product_by_id(expected_id)
+        except Exception as exc:  # noqa: BLE001
+            _LOG.info(
+                "[dsers-sourcing] exact Shopify GID %s not readable yet: %s",
+                expected_id,
+                exc,
+            )
+        else:
+            if str(resolved.get("productId") or "") == expected_id:
+                return expected_id, resolved
+    return None
+
+
+def _poll_post_push_binding(
+    client: DSersMCPClient,
+    store_id: str,
+    source_url: str,
+    pushed: dict[str, Any],
+) -> tuple[dict[str, Any], str, dict[str, Any]] | None:
+    """Poll read-only state until DSers and Shopify expose one exact binding."""
+    pushed_records = _exact_binding_records(pushed)
+    fallback: tuple[dict[str, Any], str, dict[str, Any]] | None = None
+    for attempt in range(_BIND_LOOKUP_ATTEMPTS):
+        live: dict[str, Any] | None = None
+        try:
+            live = _reusable_product_by_source(client, store_id, source_url)
+        except Exception as exc:  # noqa: BLE001
+            # Reads are safe to retry. Never repeat import or confirmed push,
+            # including after the CloudFront 504-with-server-success case.
+            _LOG.info(
+                "[dsers-sourcing] DSers post-push lookup attempt %d failed: %s",
+                attempt + 1,
+                exc,
+            )
+
+        candidates = ([live] if live else []) + pushed_records
+        for record in candidates:
+            binding = _resolve_exact_shopify_product(record)
+            if not binding:
+                continue
+            product_id, resolved = binding
+            exact = (record, product_id, resolved)
+            if _dsers_product_id(record):
+                return exact
+            fallback = fallback or exact
+
+        if attempt + 1 < _BIND_LOOKUP_ATTEMPTS:
+            time.sleep(_BIND_LOOKUP_DELAY_SECONDS)
+    return fallback
+
+
 def _bind_live_variant_skus(
     economics: list[VariantEconomics],
     resolved: dict[str, Any],
 ) -> list[VariantEconomics]:
     live = resolved.get("variants")
-    if not isinstance(live, list) or len(live) != len(economics):
+    if not isinstance(live, list) or not live:
         raise DSersSourcingUnavailable(
-            "DSers preview and exact Shopify product have different variant "
-            "counts; Relay refused to guess supplier costs"
+            "the exact Shopify product exposed no variants for supplier binding"
         )
     if len(live) == 1:
         sku = str(live[0].get("sku") or "").strip()
-        if not sku:
+        if (
+            not sku
+            or _int(live[0].get("inventoryQuantity")) <= 0
+            or (_decimal(live[0].get("price")) or Decimal("0")) <= 0
+        ):
             raise DSersSourcingUnavailable(
-                "the exact Shopify variant has no SKU; Relay refused to guess"
+                "the exact Shopify variant is not sellable with a real SKU"
+            )
+        exact = [
+            variant
+            for variant in economics
+            if variant.sku == sku
+            or (
+                variant.shopify_variant_id
+                and variant.shopify_variant_id
+                == str(live[0].get("variantId") or "")
+            )
+        ]
+        # A product with one preview row and one live variant is inherently
+        # one-to-one within the already exact product GID. This preserves the
+        # single-variant DSers path without using its title as an identifier.
+        if len(exact) == 1:
+            selected = exact[0]
+        elif len(economics) == 1:
+            selected = economics[0]
+        else:
+            raise DSersSourcingUnavailable(
+                "the sole Shopify variant did not map to one supplier variant "
+                "by exact SKU or variant ID"
             )
         return [
             VariantEconomics(
                 sku,
-                economics[0].cost,
-                economics[0].sale_price,
-                economics[0].stock,
+                selected.cost,
+                selected.sale_price,
+                selected.stock,
+                str(live[0].get("variantId") or ""),
             )
         ]
 
-    available = list(live)
-    bound: list[VariantEconomics] = []
-    for variant in economics:
+    sku_counts: dict[str, int] = {}
+    for item in live:
+        sku = str(item.get("sku") or "").strip()
+        if sku:
+            sku_counts[sku] = sku_counts.get(sku, 0) + 1
+
+    candidates: list[tuple[Decimal, int, str, str, VariantEconomics]] = []
+    for item in live:
+        sku = str(item.get("sku") or "").strip()
+        sku_option_values = _shopify_sku_option_values(sku)
+        variant_id = str(item.get("variantId") or "").strip()
+        price = _decimal(item.get("price"))
+        inventory = _int(item.get("inventoryQuantity"))
+        if (
+            not sku
+            or sku_counts.get(sku) != 1
+            or not re.fullmatch(r"gid://shopify/ProductVariant/\d+", variant_id)
+            or price is None
+            or price <= 0
+            or inventory <= 0
+        ):
+            continue
         matches = [
-            item
-            for item in available
-            if variant.sku
-            in {
-                str(item.get("sku") or "").strip(),
-                str(item.get("title") or "").strip(),
-            }
+            variant
+            for variant in economics
+            if variant.sku == sku
+            or (
+                variant.shopify_variant_id
+                and variant.shopify_variant_id == variant_id
+            )
+            or (
+                variant.option_values
+                and variant.option_values == sku_option_values
+            )
         ]
         if len(matches) != 1:
-            raise DSersSourcingUnavailable(
-                "DSers preview variant names did not map one-to-one to exact "
-                "Shopify SKUs; Relay refused to guess"
-            )
-        match = matches[0]
-        sku = str(match.get("sku") or "").strip()
-        if not sku:
-            raise DSersSourcingUnavailable(
-                "an exact Shopify variant has no SKU; Relay refused to guess"
-            )
-        available.remove(match)
-        bound.append(
-            VariantEconomics(
-                sku=sku,
-                cost=variant.cost,
-                sale_price=variant.sale_price,
-                stock=variant.stock,
+            continue
+        matched = matches[0]
+        candidates.append(
+            (
+                price,
+                -inventory,
+                sku,
+                variant_id,
+                VariantEconomics(
+                    sku=sku,
+                    cost=matched.cost,
+                    sale_price=matched.sale_price,
+                    stock=matched.stock,
+                    shopify_variant_id=variant_id,
+                ),
             )
         )
-    return bound
+    if not candidates:
+        _LOG.info(
+            "[dsers-sourcing] no exact sellable variant binding "
+            "preview=%d option_backed=%d live=%d structured_skus=%d",
+            len(economics),
+            sum(bool(variant.option_values) for variant in economics),
+            len(live),
+            sum(
+                bool(
+                    _shopify_sku_option_values(
+                        str(item.get("sku") or "").strip()
+                    )
+                )
+                for item in live
+            ),
+        )
+        raise DSersSourcingUnavailable(
+            "this product could not be bound to one sellable Shopify variant "
+            "by exact SKU, SKU-encoded option identity, or variant ID; Relay "
+            "did not use title matching"
+        )
+    candidates.sort(key=lambda candidate: candidate[:4])
+    _LOG.info(
+        "[dsers-sourcing] bound exact sellable variant sku=%s variant_id=%s",
+        candidates[0][2],
+        candidates[0][3],
+    )
+    return [candidates[0][4]]
 
 
 def _supplier_product_id(source_url: str) -> str:
@@ -644,6 +910,7 @@ def dsers_store_push(
         "visibility_mode": "sell_immediately",
         "force_push": False,
     }
+    binding: tuple[dict[str, Any], str, dict[str, Any]] | None = None
     try:
         if live_before:
             pushed = {
@@ -664,53 +931,38 @@ def dsers_store_push(
             )
             pushed["confirmation"] = confirmation
     except Exception as exc:  # noqa: BLE001
-        live = _reusable_product_by_source(
-            active_client, store_id, source_url
+        binding = _poll_post_push_binding(
+            active_client,
+            store_id,
+            source_url,
+            {},
         )
-        if not live:
+        if not binding:
             raise DSersSourcingUnavailable(
-                "DSers push returned an ambiguous failure and a state read "
-                "did not prove success; Relay did not retry"
+                "DSers push returned an ambiguous failure and bounded read-only "
+                "polling did not prove success; Relay did not retry the push"
             ) from exc
         pushed = {
             "reconciled_after_error": str(exc),
-            "product": live,
+            "product": binding[0],
         }
 
-    live = _reusable_product_by_source(active_client, store_id, source_url)
-    result_record = next(
-        (
-            record
-            for record in _walk_dicts(pushed)
-            if _shopify_product_id(record)
-        ),
-        None,
+    binding = binding or _poll_post_push_binding(
+        active_client,
+        store_id,
+        source_url,
+        pushed,
     )
-    product_record = live or result_record or {}
-    product_id = _shopify_product_id(product_record)
-    resolved: dict[str, Any] | None = None
-    if not product_id:
-        handle = _store_handle(product_record)
-        if handle:
-            resolved = service_clients.commerce_product_by_handle(handle)
-            product_id = str(resolved.get("productId") or "")
-    if not product_id:
+    if not binding:
         raise DSersSourcingUnavailable(
-            "DSers push could not be bound to an exact Shopify product ID; "
-            "Relay will not use title matching"
+            "this product could not be bound to an exact Shopify product after "
+            "bounded read-only polling; Relay did not use title matching"
         )
-    dsers_product_id = str(
-        _field(product_record, "dsers_product_id", "product_id") or ""
-    )
-    if resolved is None:
-        # Even when DSers returns a Shopify GID, read the exact post-push
-        # variants so supplier costs are never assigned by array position.
-        handle = _store_handle(product_record)
-        if handle:
-            resolved = service_clients.commerce_product_by_handle(handle)
-    if resolved is None:
+    product_record, product_id, resolved = binding
+    dsers_product_id = _dsers_product_id(product_record)
+    if not dsers_product_id:
         raise DSersSourcingUnavailable(
-            "DSers push returned no exact Shopify handle for variant binding"
+            "the exact Shopify product binding exposed no DSers product ID"
         )
     variants = _bind_live_variant_skus(variants, resolved)
     metadata = service_clients.commerce_mark_sourced_product(
@@ -783,6 +1035,11 @@ def source_missing_product(
         # item.
         selected = (affordable or candidates)[0]
         source_url = _source_url(selected)
+        _LOG.info(
+            "[dsers-sourcing] selected supplier source query=%r url=%s",
+            query,
+            source_url,
+        )
         imported = dsers_product_import(
             source_url, request, client=active_client
         )
