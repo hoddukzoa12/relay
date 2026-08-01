@@ -353,17 +353,19 @@ def search_catalog(
                     }
         except Exception as exc:  # noqa: BLE001
             _LOG.warning(
-                "[chat] DSers sourcing unavailable; keeping catalog fallback: %s",
+                "[chat] DSers sourcing attempt failed; keeping catalog fallback: %s",
                 exc,
             )
+            reason = str(exc)
             external_sourcing = {
                 "status": "unavailable",
                 "provider": "dsers",
                 "message": (
-                    "New supplier sourcing is temporarily unavailable. "
-                    "The existing catalog and autonomous USDC checkout still work."
+                    "Supplier sourcing was attempted, but Relay could not safely "
+                    f"source this product: {reason} Try a different product; the "
+                    "existing catalog and autonomous USDC checkout still work."
                 ),
-                "reason": "DSers authentication or supplier API unavailable",
+                "reason": reason,
             }
 
     # The commerce endpoint already relevance-ranks results. Preserve that

@@ -128,6 +128,50 @@ class FakeDSers:
         raise AssertionError(name)
 
 
+class DelayedBindingDSers(FakeDSers):
+    def __init__(self, delayed_reads: int = 2):
+        super().__init__()
+        self.delayed_reads = delayed_reads
+        self.post_push_reads = 0
+
+    def call_tool(self, name: str, arguments: dict) -> dict:
+        if name == "dsers_my_products" and self.pushed:
+            self.calls.append((name, arguments))
+            self.post_push_reads += 1
+            if self.post_push_reads <= self.delayed_reads:
+                return {"products": []}
+            return {
+                "products": [
+                    {
+                        "source_url": SOURCE_URL,
+                        "shopify_product_id": "1234",
+                        "dsers_product_id": "dsers-9",
+                        "store_handle": "relay-smart-watch",
+                    }
+                ]
+            }
+        return super().call_tool(name, arguments)
+
+
+class MultiVariantDSers(FakeDSers):
+    def call_tool(self, name: str, arguments: dict) -> dict:
+        if name == "dsers_product_preview":
+            self.calls.append((name, arguments))
+            return {
+                "skus": [
+                    ["name", "sell", "compare_at", "cost", "qty", "supplier_qty"],
+                    ["Red-iPhone 17", "3.20", "3.20", "2.10", 12, 12],
+                    ["Blue-iPhone 17", "2.80", "2.80", "1.90", 8, 8],
+                    ["Green-iPhone 17", "2.80", "2.80", "1.95", 9, 9],
+                ],
+                "options": [
+                    {"name": "Color", "values": ["Red", "Blue", "Green"]},
+                    {"name": "Model", "values": ["iPhone 17"]},
+                ]
+            }
+        return super().call_tool(name, arguments)
+
+
 def metadata_response(_payload: dict) -> dict:
     return {
         "product": {
@@ -165,6 +209,75 @@ def resolved_product(_handle: str) -> dict:
                 "inventoryQuantity": 12,
             }
         ],
+    }
+
+
+def resolved_multi_product(_handle: str) -> dict:
+    return {
+        "productId": "gid://shopify/Product/1234",
+        "handle": "relay-phone-case",
+        "variants": [
+            {
+                "variantId": "gid://shopify/ProductVariant/6001",
+                "sku": "10:365212#iPhone 17;14:10#Red",
+                "title": "Red",
+                "price": "3.20",
+                "inventoryQuantity": 12,
+            },
+            {
+                "variantId": "gid://shopify/ProductVariant/6002",
+                "sku": "10:365212#iPhone 17;14:173#Blue",
+                "title": "Blue",
+                "price": "2.80",
+                "inventoryQuantity": 8,
+            },
+            {
+                "variantId": "gid://shopify/ProductVariant/6003",
+                "sku": "10:365212#iPhone 17;14:175#Green",
+                "title": "Green",
+                "price": "2.80",
+                "inventoryQuantity": 9,
+            },
+            {
+                "variantId": "gid://shopify/ProductVariant/6004",
+                "sku": "SHOP-YELLOW",
+                "title": "CASE-YELLOW",
+                "price": "2.60",
+                "inventoryQuantity": 10,
+            },
+        ],
+    }
+
+
+def multi_metadata_response(payload: dict) -> dict:
+    selected = payload["variants"]
+    assert selected == [
+        {
+            "sku": "10:365212#iPhone 17;14:175#Green",
+            "cost": "1.95",
+            "supplierInventory": 9,
+        }
+    ]
+    return {
+        "product": {
+            "productId": "gid://shopify/Product/1234",
+            "variantId": "gid://shopify/ProductVariant/6003",
+            "sku": "10:365212#iPhone 17;14:175#Green",
+            "title": "iPhone Case",
+            "description": "",
+            "price": "2.80",
+            "inventoryQuantity": 9,
+            "status": "ACTIVE",
+            "tags": ["relay:autonomous-sourced", "relay:dsers"],
+            "supplierCost": {
+                "amount": "1.95",
+                "currency": "USD",
+                "source": "dsers_mcp_snapshot",
+                "capturedAt": "2026-07-27",
+                "shipTo": "US",
+                "supplierUrl": SOURCE_URL,
+            },
+        }
     }
 
 
@@ -209,6 +322,73 @@ def test_autonomous_workflow_imports_one_and_binds_exact_product_id() -> None:
     ]
     assert payload["productId"] == "gid://shopify/Product/1234"
     assert payload["variants"][0]["cost"] == "4.00"
+
+
+def test_multi_variant_product_binds_one_deterministic_sellable_sku() -> None:
+    client = MultiVariantDSers()
+    with patch.object(
+        dsers_sourcing.service_clients,
+        "commerce_mark_sourced_product",
+        side_effect=multi_metadata_response,
+    ) as mark, patch.object(
+        dsers_sourcing.service_clients,
+        "commerce_product_by_handle",
+        side_effect=resolved_multi_product,
+    ):
+        result = dsers_sourcing.source_missing_product(
+            "iphone case", 10, client=client
+        )
+
+    assert (
+        result["metadata"]["product"]["sku"]
+        == "10:365212#iPhone 17;14:175#Green"
+    )
+    assert (
+        result["metadata"]["product"]["variantId"]
+        == "gid://shopify/ProductVariant/6003"
+    )
+    assert mark.call_args.args[0]["variants"] == [
+        {
+            "sku": "10:365212#iPhone 17;14:175#Green",
+            "cost": "1.95",
+            "supplierInventory": 9,
+        }
+    ]
+
+
+def test_multi_variant_binding_never_matches_a_shopify_title() -> None:
+    with pytest.raises(
+        dsers_sourcing.DSersSourcingUnavailable,
+        match="exact SKU",
+    ):
+        dsers_sourcing._bind_live_variant_skus(
+            [
+                dsers_sourcing.VariantEconomics(
+                    sku="Blue",
+                    cost=Decimal("1.00"),
+                    sale_price=Decimal("2.00"),
+                    stock=5,
+                )
+            ],
+            {
+                "variants": [
+                    {
+                        "variantId": "gid://shopify/ProductVariant/6002",
+                        "sku": "CASE-BLUE",
+                        "title": "Blue",
+                        "price": "2.00",
+                        "inventoryQuantity": 5,
+                    },
+                    {
+                        "variantId": "gid://shopify/ProductVariant/6003",
+                        "sku": "CASE-GREEN",
+                        "title": "Green",
+                        "price": "2.10",
+                        "inventoryQuantity": 5,
+                    },
+                ]
+            },
+        )
 
 
 def test_supplier_relevance_order_wins_over_a_cheaper_later_result() -> None:
@@ -302,6 +482,64 @@ def test_ambiguous_push_reads_live_state_and_never_retries() -> None:
         if name == "dsers_store_push"
     ) == 1
     assert [name for name, _args in client.calls].count("dsers_my_products") >= 1
+
+
+def test_post_push_binding_polls_reads_without_repeating_mutations() -> None:
+    client = DelayedBindingDSers(delayed_reads=2)
+    with patch.object(
+        dsers_sourcing.service_clients,
+        "commerce_mark_sourced_product",
+        side_effect=metadata_response,
+    ), patch.object(
+        dsers_sourcing.service_clients,
+        "commerce_product_by_handle",
+        side_effect=resolved_product,
+    ), patch.object(dsers_sourcing.time, "sleep") as sleep:
+        result = dsers_sourcing.dsers_store_push(
+            "import-1", SOURCE_URL, Decimal("10"), client=client
+        )
+
+    assert result["productId"] == "gid://shopify/Product/1234"
+    assert client.post_push_reads == 3
+    assert sleep.call_count == 2
+    assert [name for name, _args in client.calls].count("dsers_store_push") == 2
+    assert sum(
+        arguments.get("confirm") is True
+        for name, arguments in client.calls
+        if name == "dsers_store_push"
+    ) == 1
+
+
+def test_post_push_binding_can_resolve_an_exact_gid_without_a_handle() -> None:
+    client = FakeDSers()
+    original_call = client.call_tool
+
+    def gid_only(name: str, arguments: dict) -> dict:
+        result = original_call(name, arguments)
+        if name == "dsers_my_products" and result["products"]:
+            result["products"][0].pop("store_handle")
+        return result
+
+    client.call_tool = gid_only  # type: ignore[method-assign]
+    with patch.object(
+        dsers_sourcing.service_clients,
+        "commerce_mark_sourced_product",
+        side_effect=metadata_response,
+    ), patch.object(
+        dsers_sourcing.service_clients,
+        "commerce_product_by_handle",
+    ) as by_handle, patch.object(
+        dsers_sourcing.service_clients,
+        "commerce_product_by_id",
+        side_effect=resolved_product,
+    ) as by_id:
+        result = dsers_sourcing.dsers_store_push(
+            "import-1", SOURCE_URL, Decimal("10"), client=client
+        )
+
+    assert result["productId"] == "gid://shopify/Product/1234"
+    by_handle.assert_not_called()
+    by_id.assert_called_with("gid://shopify/Product/1234")
 
 
 def test_non_positive_margin_blocks_push() -> None:

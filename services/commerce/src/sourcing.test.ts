@@ -3,6 +3,7 @@ import test from "node:test";
 import {
   markAutonomousSourcedProduct,
   resolveShopifyProductByHandle,
+  resolveShopifyProductById,
 } from "./sourcing.js";
 
 const sourceUrl =
@@ -248,6 +249,45 @@ test("resolves only the exact Shopify handle and returns live variant SKUs", asy
       title: "Black",
       price: "4.60",
       inventoryQuantity: 12,
+    },
+  ]);
+});
+
+test("resolves variants through an exact Shopify product GID", async () => {
+  const productId = "gid://shopify/Product/1234";
+  const result = await resolveShopifyProductById(productId, {
+    mock: false,
+    graphql: async <T>(_query: string, variables: Record<string, unknown>) => {
+      assert.equal(variables.id, productId);
+      return {
+        product: {
+          id: productId,
+          title: "iPhone Case",
+          variants: {
+            nodes: [
+              {
+                id: "gid://shopify/ProductVariant/6002",
+                sku: "CASE-BLUE",
+                title: "Blue",
+                price: "2.80",
+                inventoryQuantity: 8,
+              },
+            ],
+          },
+        },
+      } as T;
+    },
+  });
+
+  assert.equal(result.productId, productId);
+  assert.equal(result.matching, "exact Shopify product GID (never title)");
+  assert.deepEqual(result.variants, [
+    {
+      variantId: "gid://shopify/ProductVariant/6002",
+      sku: "CASE-BLUE",
+      title: "Blue",
+      price: "2.80",
+      inventoryQuantity: 8,
     },
   ]);
 });

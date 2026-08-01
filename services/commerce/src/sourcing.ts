@@ -87,6 +87,22 @@ interface ResolveHandleData {
   } | null;
 }
 
+interface ResolveIdData {
+  product: {
+    id: string;
+    title: string;
+    variants: {
+      nodes: {
+        id: string;
+        sku: string | null;
+        title: string;
+        price: string;
+        inventoryQuantity: number | null;
+      }[];
+    };
+  } | null;
+}
+
 interface UpdateData {
   productUpdate: {
     product: {
@@ -162,6 +178,18 @@ const RESOLVE_HANDLE = /* GraphQL */ `
     productByHandle(handle: $handle) {
       id
       handle
+      title
+      variants(first: 100) {
+        nodes { id sku title price inventoryQuantity }
+      }
+    }
+  }
+`;
+
+const RESOLVE_ID = /* GraphQL */ `
+  query ResolveAutonomousSourcingProduct($id: ID!) {
+    product(id: $id) {
+      id
       title
       variants(first: 100) {
         nodes { id sku title price inventoryQuantity }
@@ -440,6 +468,38 @@ export async function resolveShopifyProductByHandle(
       inventoryQuantity: variant.inventoryQuantity ?? 0,
     })),
     matching: "exact Shopify handle (never title)",
+  };
+}
+
+export async function resolveShopifyProductById(
+  productId: string,
+  options: { graphql?: GraphQL; mock?: boolean } = {},
+): Promise<Record<string, unknown>> {
+  if (!PRODUCT_ID.test(productId)) {
+    throw new Error("invalid exact Shopify product GID");
+  }
+  if (options.mock ?? config.mock) {
+    throw new Error(
+      "DSers product resolution requires the live Shopify catalog",
+    );
+  }
+  const graphql = options.graphql ?? shopifyGraphQL;
+  const result = await graphql<ResolveIdData>(RESOLVE_ID, { id: productId });
+  const product = result.product;
+  if (!product || product.id !== productId) {
+    throw new Error(`Shopify product ${productId} was not found exactly`);
+  }
+  return {
+    productId: product.id,
+    title: product.title,
+    variants: product.variants.nodes.map((variant) => ({
+      variantId: variant.id,
+      sku: variant.sku,
+      title: variant.title,
+      price: variant.price,
+      inventoryQuantity: variant.inventoryQuantity ?? 0,
+    })),
+    matching: "exact Shopify product GID (never title)",
   };
 }
 

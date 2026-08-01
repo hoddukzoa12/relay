@@ -10,6 +10,7 @@ import { listProducts } from "./catalog.js";
 import {
   markAutonomousSourcedProduct,
   resolveShopifyProductByHandle,
+  resolveShopifyProductById,
 } from "./sourcing.js";
 import {
   OrderLifecycleConflictError,
@@ -66,6 +67,18 @@ app.get(
   asyncH(async (req, res) => {
     const { handle } = ProductHandleSchema.parse(req.params);
     res.json(await resolveShopifyProductByHandle(handle));
+  }),
+);
+
+const ProductIdSchema = z.object({
+  productId: z.string().regex(/^gid:\/\/shopify\/Product\/\d+$/),
+});
+
+app.get(
+  "/products/by-id",
+  asyncH(async (req, res) => {
+    const { productId } = ProductIdSchema.parse(req.query);
+    res.json(await resolveShopifyProductById(productId));
   }),
 );
 

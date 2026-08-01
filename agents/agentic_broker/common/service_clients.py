@@ -238,6 +238,14 @@ def commerce_product_by_handle(handle: str) -> dict[str, Any]:
     return _get(f"{settings.commerce_url}/products/by-handle/{encoded}")
 
 
+def commerce_product_by_id(product_id: str) -> dict[str, Any]:
+    """Resolve an exact DSers-provided Shopify product GID; never use a title."""
+    return _get(
+        f"{settings.commerce_url}/products/by-id",
+        {"productId": product_id},
+    )
+
+
 def commerce_mark_sourced_product(payload: dict[str, Any]) -> dict[str, Any]:
     """Bind one exact Shopify product ID to DSers provenance and costs."""
     return _post(f"{settings.commerce_url}/products/sourcing-metadata", payload)

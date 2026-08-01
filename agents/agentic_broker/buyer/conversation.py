@@ -410,9 +410,13 @@ class ConversationService:
             )
         sourcing = search.get("externalSourcing", {})
         if sourcing.get("status") == "unavailable":
-            return (
-                "I could not source a new matching product right now. "
-                "The existing catalog and autonomous USDC checkout remain available."
+            return str(
+                sourcing.get("message")
+                or sourcing.get("reason")
+                or (
+                    "Supplier sourcing was attempted, but this product could not "
+                    "be sourced safely. Try a different product."
+                )
             )
         return "The AI model is temporarily unavailable. No funds were sent."
 

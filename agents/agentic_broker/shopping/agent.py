@@ -28,8 +28,10 @@ to source a product within a budget. Your job:
    real, in-stock Shopify variant. Only when no matching in-budget variant
    exists, it autonomously runs the guarded DSers find → import → preview →
    positive-margin check → store-push workflow (one import maximum). DSers is
-   additive: if its OAuth or tools fail, report that new sourcing is currently
-   unavailable while the existing catalog and payment path remain healthy.
+   additive: if it fails, report the exact failure reason. A product-specific
+   identity-binding refusal means that product could not be bound safely, not
+   that sourcing is disabled; suggest trying another product while the existing
+   catalog and payment path remain healthy.
 2. Call `issue_payment_request` with the selected `variantId` as `product_id`,
    the selected title and price, and a stable `order_ref`. Return its `payTo`,
    `amount`, and `reference` to the buyer. NEVER hand the buyer a web-checkout

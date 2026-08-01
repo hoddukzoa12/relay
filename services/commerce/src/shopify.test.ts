@@ -260,6 +260,12 @@ test("live catalog reads a private supplier-cost snapshot from the selected vari
           variants: {
             nodes: [
               {
+                id: "gid://shopify/ProductVariant/unbound-cheaper",
+                sku: "14:496#purple",
+                price: "3.00",
+                inventoryQuantity: 9999,
+              },
+              {
                 id: "gid://shopify/ProductVariant/1",
                 sku: "14:193#black",
                 price: "3.95",
@@ -281,6 +287,8 @@ test("live catalog reads a private supplier-cost snapshot from the selected vari
     },
   });
 
+  assert.equal(products[0]?.variantId, "gid://shopify/ProductVariant/1");
+  assert.equal(products[0]?.sku, "14:193#black");
   assert.deepEqual(products[0]?.supplierCost, {
     amount: "3.96",
     currency: "USD",

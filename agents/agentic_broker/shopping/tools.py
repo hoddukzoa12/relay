@@ -144,9 +144,10 @@ def source_and_price(query: str, budget_amount: float) -> dict[str, Any]:
             )
             raise ValueError(
                 f"no suitable in-stock catalog product matches {query!r} "
-                f"within {budget_amount:.2f} USDC; new DSers sourcing is "
-                f"currently unavailable ({exc}). Existing catalog products "
-                f"and autonomous USDC checkout remain available.{partial_detail}"
+                f"within {budget_amount:.2f} USDC; supplier sourcing was attempted "
+                f"but this product could not be sourced safely ({exc}). Try a "
+                "different product; Existing catalog products and autonomous "
+                f"USDC checkout remain available.{partial_detail}"
             ) from exc
 
     if not candidates:
