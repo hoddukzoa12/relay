@@ -1,6 +1,13 @@
-# Agentic Resell Broker
+# Relay
 
 > **Google Cloud × Solana AI Agentic Hackathon** · Track C: Multi-Agent Commerce
+
+| | |
+|---|---|
+| 프로젝트 소개서 | [`docs/PITCH.md`](docs/PITCH.md) |
+| 스토어프론트 (라이브) | https://solanagcp.myshopify.com — 개발 스토어, 비밀번호는 제출물에 기재 |
+| MCP 문서 · 엔드포인트 | https://solanagcp.myshopify.com/pages/mcp · `https://mcp-763kssfe2q-uc.a.run.app/mcp` |
+| 프로토콜 레퍼런스 | [`docs/PROTOCOLS.md`](docs/PROTOCOLS.md) (A2A / AP2 / x402) |
 
 A buyer agent delegates a purchase; a **shopping (broker) agent** sources the
 product, sets a resale price, and issues an **agent-native payment request**; the
@@ -19,6 +26,47 @@ one sentence the whole design defends.
 **A2A로 협상 · AP2 mandate로 인가 · Solana Pay로 정산.** (USDC 온체인)
 
 **계정도 비밀번호도 없다. 지갑이 곧 계정이고, 서명이 곧 로그인.**
+
+---
+
+## 5분 안에 확인하기 (설치 없이)
+
+전체 스택을 띄우지 않고도 라이브 배포본에서 핵심 주장을 확인할 수 있다.
+
+```bash
+# ① 공개 서비스가 살아 있다 (나머지 3개는 비공개라 403이 정상)
+curl -s https://buyer-763kssfe2q-uc.a.run.app/health
+curl -s https://mcp-763kssfe2q-uc.a.run.app/health
+
+# ② 인증 없이는 결제 도구를 쓸 수 없다 → 401
+curl -s -o /dev/null -w '%{http_code}\n' -X POST \
+  -H 'Content-Type: application/json' -H 'Accept: application/json, text/event-stream' \
+  -d '{"jsonrpc":"2.0","id":1,"method":"tools/list"}' \
+  https://mcp-763kssfe2q-uc.a.run.app/mcp
+
+# ③ MCP 는 API 키를 발급하지 않는다 — OAuth 2.1 디스커버리(RFC 9728)
+curl -s https://mcp-763kssfe2q-uc.a.run.app/.well-known/oauth-protected-resource
+
+# ④ 대화형 에이전트가 살아 있다 (검색은 로그인 없이 공개)
+#    에이전트는 배송지가 모두 채워져야 검색한다 — 빠진 항목이 있으면 되묻는다
+curl -s -X POST -H 'Content-Type: application/json' -d '{
+  "sessionId":"judge-1",
+  "message":"무선 이어폰 5 USDC 이하로 찾아줘. 수령인 Judge Test, 옥동 123-4, 안동시, 경북, KR, 36698, 010-1234-5678."
+}' https://buyer-763kssfe2q-uc.a.run.app/chat
+
+# ⑤ 같은 세션에서 구매를 시도하면 서버가 거부한다 (프롬프트가 아니라 서버가 막는다)
+#    응답에 "paymentBlocked": true, "authRequired": true 가 실린다
+curl -s -X POST -H 'Content-Type: application/json' \
+  -d '{"sessionId":"judge-1","message":"가장 싼 걸로 지금 구매해줘"}' \
+  https://buyer-763kssfe2q-uc.a.run.app/chat
+```
+
+응답이 느리면 Cloud Run이 scale-to-zero에서 깨어나는 중이다(유휴 시 과금 0원).
+카탈로그에 없는 품목을 요청하면 에이전트가 공급사 풀에서 **직접 소싱해 카탈로그에 올린다** —
+다만 공급사 조회가 포함되어 수 분이 걸릴 수 있다.
+
+온체인 증거는 [`docs/evidence/`](docs/evidence/) 아래에 트랜잭션 서명과 함께 기록돼 있으며,
+모두 devnet explorer에서 조회 가능하다.
 
 ---
 
