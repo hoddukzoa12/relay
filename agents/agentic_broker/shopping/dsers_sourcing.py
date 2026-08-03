@@ -223,7 +223,7 @@ def _preview_option_signatures(payload: dict[str, Any]) -> dict[str, tuple[str, 
 def _shopify_sku_option_values(sku: str) -> tuple[str, ...]:
     """Extract option labels only from a structured supplier-backed Shopify SKU."""
     parts = sku.split(";")
-    if len(parts) < 2:
+    if len(parts) < 1:
         return ()
     values: list[str] = []
     for part in parts:
