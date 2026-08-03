@@ -28,6 +28,14 @@ def _isolated_target_store(monkeypatch: pytest.MonkeyPatch) -> None:
     )
 
 
+def test_shopify_sku_option_values_parses_single_option() -> None:
+    assert dsers_sourcing._shopify_sku_option_values("14:193#Black") == ("Black",)
+
+
+def test_shopify_sku_option_values_rejects_unstructured_sku() -> None:
+    assert dsers_sourcing._shopify_sku_option_values("WATCH-BLACK") == ()
+
+
 class FakeDSers:
     def __init__(
         self,
